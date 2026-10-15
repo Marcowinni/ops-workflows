@@ -1,0 +1,16 @@
+name: TW Funktionstest (HTTP)
+description: >-
+  HTTP-Smoke gegen Produktion (ADR 0044): jede Seite muss 2xx liefern und den
+  erwarteten Text enthalten. Startpunkt für Lösungen ohne E2E-Test.
+author: TW Projects
+
+inputs:
+  checks:
+    description: >-
+      Eine Prüfung pro Zeile: "https://… | erwarteter Text" (Text optional,
+      Zeilen mit # werden ignoriert).
+    required: true
+
+runs:
+  using: node24
+  main: main.mjs

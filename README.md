@@ -80,6 +80,18 @@ jobs:
 
 Ohne Smoke-Job `smoke-result` weglassen: Der Lauf meldet dann «kein automatischer Funktionstest», und kein Update geht ohne Klick live.
 
+## Funktionstest ohne E2E: `smoke-http`
+
+Für Lösungen ohne eigenen E2E-Test gibt es einen HTTP-Smoke als Startpunkt. Jede Seite muss mit 2xx antworten und den erwarteten Text enthalten. Ein echter Hauptablauf-Test bleibt das Ziel (Vorlage, QUALITY W02).
+
+```yaml
+      - uses: Marcowinni/ops-workflows/smoke-http@v1
+        with:
+          checks: |
+            https://www.example.ch | Willkommen
+            https://www.example.ch/kontakt | Kontakt
+```
+
 ## Melde-Token einrichten
 
 Der Token liegt nur als Secret im Repo. Das Business OS kennt nur seinen sha256.
