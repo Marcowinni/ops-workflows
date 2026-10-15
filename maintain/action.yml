@@ -1,0 +1,55 @@
+name: TW Wartung
+description: >-
+  Wartungslauf nach ADR 0044 — prüft Dependabot-PRs, merged Patch/Minor bei
+  grünen Pflicht-Checks und grünem Funktionstest, löst Deploys aus und meldet
+  den Status an das TW Business OS.
+author: TW Projects
+
+inputs:
+  report-token:
+    description: Melde-Token der Lösung (Secret OPS_REPORT_TOKEN). Nur der sha256 liegt im Business OS.
+    required: true
+  smoke-result:
+    description: >-
+      Ergebnis des Funktionstests gegen Produktion (needs.<smoke-job>.result):
+      success | failure | cancelled | skipped. Leer/none = kein Funktionstest
+      → nichts geht ohne Klick live.
+    required: false
+    default: none
+  required-checks:
+    description: >-
+      Namen der CI-Checks (Komma oder Zeilen), die auf einem Dependabot-PR
+      grün sein müssen. Leer = kein Auto-Merge.
+    required: false
+    default: ""
+  deploy-hooks:
+    description: >-
+      Deploy-Hook-URLs (Secret, durch Leerzeichen/Zeilen getrennt), nach einem
+      Merge ausgelöst. Nötig, weil ein Merge mit GITHUB_TOKEN keine Workflows
+      auslöst und Vercel Commits von Dependabot nicht deployt.
+    required: false
+    default: ""
+  merge-method:
+    description: squash | merge | rebase
+    required: false
+    default: squash
+  report-url:
+    description: Empfänger im Business OS (Edge Function solution_report).
+    required: false
+    default: https://ngqrirdjagopzkvcsovw.supabase.co/functions/v1/solution_report
+  github-token:
+    description: Token mit contents:write + pull-requests:write + checks:read + statuses:read.
+    required: false
+    default: ${{ github.token }}
+  dry-run:
+    description: true = nichts mergen, nur auswerten und melden.
+    required: false
+    default: "false"
+
+outputs:
+  merged:
+    description: Kommagetrennte Nummern der gemergten PRs.
+
+runs:
+  using: node24
+  main: main.mjs
