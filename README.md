@@ -87,5 +87,5 @@ gh secret set OPS_REPORT_TOKEN --repo Marcowinni/<repo> --body "$TOKEN"
 ## Entwicklung
 
 ```bash
-node --test test/
+node --test
 ```
