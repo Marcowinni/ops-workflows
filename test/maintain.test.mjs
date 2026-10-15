@@ -4,6 +4,7 @@ import { evaluateChecks } from "../maintain/lib/checks.mjs";
 import { bumpOf, classifyUpdate } from "../maintain/lib/classify.mjs";
 import { autoMergeGate, planMerges, withApproved } from "../maintain/lib/plan.mjs";
 import { buildReport } from "../maintain/lib/report.mjs";
+import { applySchedule, isSecurityPr, pendingFor } from "../maintain/lib/schedule.mjs";
 
 test("bumpOf: semver incl. 0.x and action tags", () => {
   assert.equal(bumpOf("16.3.6", "16.3.8"), "patch");
@@ -110,28 +111,41 @@ test("withApproved: approved + green + mergeable moves to merge, respecting lock
   assert.deepEqual(withApproved(plan, []).merge.map((p) => p.number), [1], "nothing approved → unchanged");
 });
 
-test("buildReport: waiting PRs go along for Inbox approvals, except merge-in-GitHub ones", () => {
-  const runUrl = "https://github.com/o/r/actions/runs/1";
+test("isSecurityPr: Dependabot security group only", () => {
+  assert.equal(isSecurityPr("chore(deps): bump the security group across 1 directory with 3 updates"), true);
+  assert.equal(isSecurityPr("chore(deps): bump the minor-and-patch group with 2 updates"), false);
+  assert.equal(isSecurityPr("chore(deps): bump security-headers from 1.0.0 to 1.0.1"), false);
+});
+
+test("pendingFor: waiting PRs for the sync call, without merge-in-GitHub ones", () => {
   const gateClosed = { allowed: false, reason: "kein automatischer Funktionstest" };
-  const plan = planMerges([pr(1), pr(2, { files: [".github/workflows/x.yml"] }), pr(3, { bump: "major", files: ["p.json"] }),
-    pr(4, { bump: "major", files: ["q.json"], checks: { state: "fail", failing: ["ci"], missing: [] } })], gateClosed);
-  const r = buildReport({ plan, smokeResult: "none", runUrl });
+  const plan = planMerges([pr(1, { security: true }), pr(2, { files: [".github/workflows/x.yml"] }), pr(3, { bump: "major", files: ["p.json"] })], gateClosed);
+  assert.deepEqual(pendingFor(plan), [
+    { number: 1, title: "PR 1", url: "https://github.com/o/r/pull/1", kind: "deps_update", security: true },
+    { number: 3, title: "PR 3", url: "https://github.com/o/r/pull/3", kind: "deps_major", security: false },
+  ]);
+});
+
+test("applySchedule: wave day merges all, otherwise only security, no package nothing", () => {
+  const plan = planMerges([pr(1), pr(2, { security: true, files: ["sec.lock"] })], open);
+  assert.deepEqual(applySchedule(plan, { updates: "all" }).merge.map((p) => p.number), [1, 2]);
+  const off = applySchedule(plan, { updates: "security" });
+  assert.deepEqual([off.merge.map((p) => p.number), off.held.map((p) => p.number)], [[2], [1]]);
+  const none = applySchedule(plan, { updates: "none" });
+  assert.deepEqual([none.merge, none.held.length], [[], 2]);
+  assert.deepEqual(applySchedule(plan, undefined).merge, [], "no schedule from the OS = nothing merges");
+});
+
+test("buildReport: held for the wave stays ok, majors pending as bundle, no prs in the report", () => {
+  const runUrl = "https://github.com/o/r/actions/runs/1";
+  const plan = applySchedule(planMerges([pr(1), pr(3, { bump: "major", files: ["p.json"] })], open), { updates: "security" });
+  const r = buildReport({ plan, smokeResult: "success", runUrl, scheduleNote: "Patch/Minor am nächsten Montag (Welle 1)" });
   const [, update, major] = r.checks;
-  assert.equal(update.status, "pending_approval");
-  assert.deepEqual(update.prs, [{ number: 1, title: "PR 1", url: "https://github.com/o/r/pull/1" }]);
+  assert.deepEqual([update.status, update.detail], ["ok", "1 warten auf Welle (Patch/Minor am nächsten Montag (Welle 1))"]);
   assert.equal(major.status, "pending_approval");
-  assert.deepEqual(major.prs.map((p) => p.number), [3]);
-  assert.match(major.detail, /Checks rot, braucht Anpassung: #4/);
-
-  const failing = buildReport({ plan: { ...plan, failing: [pr(9)] }, smokeResult: "none", runUrl }).checks[1];
-  assert.equal(failing.status, "fail");
-  assert.deepEqual(failing.prs.map((p) => p.number), [1], "a red update does not withdraw waiting approvals");
-
-  const onlyBlocked = buildReport({ plan: planMerges([pr(4, { bump: "major", checks: { state: "fail", failing: ["ci"], missing: [] } })], open), smokeResult: "success", runUrl });
-  assert.equal(onlyBlocked.checks[2].status, "warn");
-  assert.equal(onlyBlocked.checks[2].prs, undefined);
-
-  const approvedMerge = buildReport({ plan, merged: [{ ...pr(3, { bump: "major" }), kind: "deps_major", approved: true }], smokeResult: "none", runUrl });
+  assert.match(major.detail, /Sammel-Freigabe pro Monat/);
+  assert.ok(r.checks.every((c) => c.prs === undefined));
+  const approvedMerge = buildReport({ plan, merged: [{ ...pr(3, { bump: "major" }), kind: "deps_major", approved: true }], smokeResult: "success", runUrl });
   assert.deepEqual(approvedMerge.events, [{ kind: "deps_major", summary: "PR #3 nach Freigabe gemergt (major): PR 3", url: "https://github.com/o/r/pull/3" }]);
 });
 

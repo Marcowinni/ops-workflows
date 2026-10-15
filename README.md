@@ -23,9 +23,22 @@ Das Repo ist öffentlich, damit es auch von öffentlichen Repos und nach einer �
    - ein Nachweis-Eintrag pro Merge.
    Bleibt der Bericht länger als 30 h aus, meldet das OS den Lauf als verstummt.
 
+## Takt in Wellen
+
+Geprüft wird täglich, Updates kommen in Wellen (ADR 0044 §4). Der Lauf fragt jeden Tag zuerst das Business OS ab («Abgleich»). Die Welle steht im Register, nicht im Repo.
+
+| | ohne Klick gemergt |
+|---|---|
+| Welle 1 (eigene Apps) | Patch/Minor am Montag |
+| Welle 2 (Kunden mit Paket) | Patch/Minor am Mittwoch, nur wenn Welle 1 grün ist |
+| immer | Dependabot-Gruppe `security`, jeden Tag |
+| ohne Paket | nichts |
+
+Majors kommen als **eine Sammel-Freigabe pro Repo und Monat**, ab dem ersten Wellentag des Monats. Damit die Montags-Welle die PRs der Woche sieht, öffnet Dependabot sie montags früh (`time` in `dependabot.yml`).
+
 ## Freigaben (Stufe 2, Pull-Modell)
 
-Der Lauf meldet jeden PR, der einen Klick braucht, mit Nummer, Titel und Link. Das Business OS legt dafür eine Freigabe in der Inbox «Freigaben» an, und zwar eine pro PR und Titel. Ändert Dependabot die Version im PR, braucht es ein neues OK.
+Im Abgleich meldet der Lauf jeden PR, der einen Klick braucht. Das Business OS legt dafür Freigaben in der Inbox «Freigaben» an: für Sicherheits-Updates und für Updates ohne Funktionstest eine pro PR und Titel, für Majors eine Sammel-Freigabe pro Monat. Ändert Dependabot die Version eines PRs, braucht es ein neues OK.
 
 Nach dem OK durch Marco oder Till verläuft es so:
 1. Die Antwort auf den nächsten Bericht nennt den PR als `approved`.

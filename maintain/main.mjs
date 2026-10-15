@@ -1,12 +1,13 @@
-// TW maintenance run (ADR 0044): evaluate Dependabot PRs, report status and
-// waiting PRs to the Business OS, merge what the auto-merge limit or a
-// person's approval allows, trigger deploys, report the merges.
+// TW maintenance run (ADR 0044): evaluate Dependabot PRs, sync with the
+// Business OS (approvals + update wave), merge what the wave, the auto-merge
+// limit or a person allows, trigger deploys, report status + proof.
 import { appendFileSync } from "node:fs";
 import { evaluateChecks } from "./lib/checks.mjs";
 import { classifyUpdate } from "./lib/classify.mjs";
 import { createGitHub } from "./lib/github.mjs";
 import { autoMergeGate, planMerges, withApproved } from "./lib/plan.mjs";
 import { buildReport } from "./lib/report.mjs";
+import { applySchedule, isSecurityPr, pendingFor } from "./lib/schedule.mjs";
 
 const input = (name) => (process.env[`INPUT_${name.toUpperCase()}`] ?? "").trim();
 const list = (value) => value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
@@ -43,6 +44,7 @@ async function inspect(gh, pr) {
     files,
     mergeable,
     bump: classifyUpdate({ title: pr.title, body: pr.body ?? "", commitMessage }),
+    security: isSecurityPr(pr.title),
     checks: evaluateChecks({ checkRuns, statuses, required: requiredChecks }),
   };
 }
@@ -70,7 +72,7 @@ async function triggerDeploys() {
   return errors;
 }
 
-async function sendReport(payload) {
+async function post(payload) {
   const res = await fetch(reportUrl, {
     method: "POST",
     headers: { "content-type": "application/json", "x-solution-token": reportToken },
@@ -93,12 +95,15 @@ async function main() {
   summary(`Funktionstest: ${smokeResult} · Auto-Merge: ${gate.allowed ? "erlaubt" : `aus (${gate.reason})`}${dryRun ? " · DRY-RUN" : ""}`);
   for (const pr of prs) summary(`- #${pr.number} ${pr.title} — ${pr.bump}, Checks ${pr.checks.state}`);
 
-  // Report first: it registers waiting PRs as Inbox approvals and answers
-  // with the ones a person already approved (pull model, ADR 0044).
-  const first = await sendReport(buildReport({ plan: initial, smokeResult, runUrl }));
-  const approved = Array.isArray(first.approved) ? first.approved : [];
+  // Sync first (pull model, ADR 0044): the Business OS turns waiting PRs into
+  // Inbox approvals, answers with the approved ones and with today's update
+  // window of this repo's wave. Only then merge.
+  const sync = await post({ pending: pendingFor(initial) });
+  const schedule = sync.schedule ?? { updates: "none", note: "kein Takt vom Business OS" };
+  const approved = Array.isArray(sync.approved) ? sync.approved : [];
+  summary(`Takt: Welle ${schedule.wave ?? "–"} · heute ${schedule.updates} · ${schedule.note}`);
   if (approved.length) summary(`Freigegeben: ${approved.map((n) => `#${n}`).join(", ")}`);
-  const plan = withApproved(initial, approved);
+  const plan = withApproved(applySchedule(initial, schedule), approved);
 
   const { merged, errors: mergeErrors } = dryRun || plan.merge.length === 0
     ? { merged: [], errors: [] }
@@ -106,9 +111,8 @@ async function main() {
   if (dryRun && plan.merge.length) summary(`Würde mergen: ${plan.merge.map((p) => `#${p.number}`).join(", ")}`);
   const deployErrors = merged.length > 0 ? await triggerDeploys() : [];
 
-  const payload = buildReport({ plan, merged, mergeErrors, deployErrors, smokeResult, runUrl });
-  // Second report only when something happened: proof of the merges + fresh status.
-  if (merged.length > 0 || mergeErrors.length > 0) await sendReport(payload);
+  const payload = buildReport({ plan, merged, mergeErrors, deployErrors, smokeResult, runUrl, scheduleNote: schedule.note });
+  await post(payload);
   for (const c of payload.checks) summary(`- ${c.kind}: ${c.status} — ${c.detail}`);
 
   if (process.env.GITHUB_OUTPUT) {
