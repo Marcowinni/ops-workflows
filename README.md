@@ -18,10 +18,23 @@ Das Repo ist öffentlich, damit es auch von öffentlichen Repos und nach einer �
    - Updates, die `.github/workflows/` ändern (`GITHUB_TOKEN` darf keine Workflows ändern),
    - alle Updates, solange es keinen Funktionstest oder keine Pflicht-Checks gibt.
 4. **Deploy:** Nach einem Merge werden die `deploy-hooks` ausgelöst. Grund: Ein Merge mit `GITHUB_TOKEN` löst keine Workflows aus, und Vercel deployt keine Commits von Dependabot.
-5. **Bericht** an das Business OS (`solution_report`):
+5. **Bericht** an das Business OS (zuerst Status + wartende PRs, nach Merges ein zweiter mit Nachweis) (`solution_report`):
    - je ein Status für `smoke_test`, `deps_update` und `deps_major`,
    - ein Nachweis-Eintrag pro Merge.
    Bleibt der Bericht länger als 30 h aus, meldet das OS den Lauf als verstummt.
+
+## Freigaben (Stufe 2, Pull-Modell)
+
+Der Lauf meldet jeden PR, der einen Klick braucht, mit Nummer, Titel und Link. Das Business OS legt dafür eine Freigabe in der Inbox «Freigaben» an, und zwar eine pro PR und Titel. Ändert Dependabot die Version im PR, braucht es ein neues OK.
+
+Nach dem OK durch Marco oder Till verläuft es so:
+1. Die Antwort auf den nächsten Bericht nennt den PR als `approved`.
+2. Der Lauf merged ihn mit dem eigenen `GITHUB_TOKEN`. Voraussetzung: Die Checks sind grün und der PR ist mergebar.
+3. Das OS selbst hat keinen Schreibzugriff auf Repos.
+
+Weitere Regeln:
+- Ist ein PR geschlossen oder gemergt, zieht das OS die offene Freigabe zurück.
+- PRs, die `.github/workflows/` ändern, erscheinen nicht in der Inbox. Sie werden in GitHub gemergt.
 
 ## Einbinden
 

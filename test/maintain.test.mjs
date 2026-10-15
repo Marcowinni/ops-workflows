@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { evaluateChecks } from "../maintain/lib/checks.mjs";
 import { bumpOf, classifyUpdate } from "../maintain/lib/classify.mjs";
-import { autoMergeGate, planMerges } from "../maintain/lib/plan.mjs";
+import { autoMergeGate, planMerges, withApproved } from "../maintain/lib/plan.mjs";
 import { buildReport } from "../maintain/lib/report.mjs";
 
 test("bumpOf: semver incl. 0.x and action tags", () => {
@@ -81,6 +81,58 @@ test("planMerges: closed gate turns green patches into approvals; old waiting PR
     { allowed: false, reason: "kein automatischer Funktionstest" });
   assert.deepEqual(plan.approvals.map((p) => [p.number, p.reason]), [[1, "kein automatischer Funktionstest"]]);
   assert.deepEqual(plan.stale.map((p) => p.number), [2]);
+});
+
+test("planMerges: red majors are blocked (no click helps), workflow changes are marked inGitHub", () => {
+  const plan = planMerges([
+    pr(1, { bump: "major", checks: { state: "fail", failing: ["ci"], missing: [] } }),
+    pr(2, { files: [".github/workflows/x.yml"] }),
+  ], open);
+  assert.deepEqual(plan.blocked.map((p) => p.number), [1]);
+  assert.deepEqual(plan.approvals.map((p) => [p.number, p.inGitHub]), [[2, true]]);
+});
+
+test("withApproved: approved + green + mergeable moves to merge, respecting lockfile overlap", () => {
+  const plan = planMerges([
+    pr(1),
+    pr(5, { bump: "major" }),
+    pr(6, { bump: "major", files: ["apps/x/package.json"] }),
+    pr(7, { bump: "major", files: ["b.json"], checks: { state: "pending", failing: [], missing: ["ci"] } }),
+    pr(8, { files: [".github/workflows/x.yml"] }),
+  ], open);
+  const next = withApproved(plan, [5, 6, 7, 8]);
+  assert.deepEqual(next.merge.map((p) => [p.number, Boolean(p.approved)]), [[1, false], [6, true]]);
+  assert.deepEqual(next.approvals.map((p) => [p.number, p.reason]), [
+    [5, "freigegeben, wartet auf grüne Checks"],
+    [7, "freigegeben, wartet auf grüne Checks"],
+    [8, "freigegeben, wartet auf grüne Checks"],
+  ]);
+  assert.deepEqual(withApproved(plan, []).merge.map((p) => p.number), [1], "nothing approved → unchanged");
+});
+
+test("buildReport: waiting PRs go along for Inbox approvals, except merge-in-GitHub ones", () => {
+  const runUrl = "https://github.com/o/r/actions/runs/1";
+  const gateClosed = { allowed: false, reason: "kein automatischer Funktionstest" };
+  const plan = planMerges([pr(1), pr(2, { files: [".github/workflows/x.yml"] }), pr(3, { bump: "major", files: ["p.json"] }),
+    pr(4, { bump: "major", files: ["q.json"], checks: { state: "fail", failing: ["ci"], missing: [] } })], gateClosed);
+  const r = buildReport({ plan, smokeResult: "none", runUrl });
+  const [, update, major] = r.checks;
+  assert.equal(update.status, "pending_approval");
+  assert.deepEqual(update.prs, [{ number: 1, title: "PR 1", url: "https://github.com/o/r/pull/1" }]);
+  assert.equal(major.status, "pending_approval");
+  assert.deepEqual(major.prs.map((p) => p.number), [3]);
+  assert.match(major.detail, /Checks rot, braucht Anpassung: #4/);
+
+  const failing = buildReport({ plan: { ...plan, failing: [pr(9)] }, smokeResult: "none", runUrl }).checks[1];
+  assert.equal(failing.status, "fail");
+  assert.deepEqual(failing.prs.map((p) => p.number), [1], "a red update does not withdraw waiting approvals");
+
+  const onlyBlocked = buildReport({ plan: planMerges([pr(4, { bump: "major", checks: { state: "fail", failing: ["ci"], missing: [] } })], open), smokeResult: "success", runUrl });
+  assert.equal(onlyBlocked.checks[2].status, "warn");
+  assert.equal(onlyBlocked.checks[2].prs, undefined);
+
+  const approvedMerge = buildReport({ plan, merged: [{ ...pr(3, { bump: "major" }), kind: "deps_major", approved: true }], smokeResult: "none", runUrl });
+  assert.deepEqual(approvedMerge.events, [{ kind: "deps_major", summary: "PR #3 nach Freigabe gemergt (major): PR 3", url: "https://github.com/o/r/pull/3" }]);
 });
 
 test("buildReport: statuses per kind, merge events, priorities", () => {

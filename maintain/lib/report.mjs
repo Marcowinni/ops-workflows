@@ -24,6 +24,23 @@ function smokeCheck(smokeResult, runUrl) {
   return { kind: "smoke_test", status, detail, url: runUrl, expected_every_hours: EXPECTED_EVERY_HOURS };
 }
 
+/**
+ * PRs the Business OS turns into Inbox approvals (pull model: the response
+ * of the next report says which were approved). Sent regardless of the
+ * check's status — a missing PR withdraws its approval. PRs that only a
+ * person can merge in GitHub (workflow changes) get no Inbox approval.
+ */
+function prsFor(approvals) {
+  return approvals
+    .filter((p) => !p.inGitHub)
+    .map((p) => ({ number: p.number, title: p.title.slice(0, 200), url: p.url }));
+}
+
+function withPrs(check, approvals) {
+  const prs = prsFor(approvals);
+  return prs.length ? { ...check, prs } : check;
+}
+
 function depsUpdateCheck(plan, merged, mergeErrors, deployErrors, runUrl) {
   const failing = [...plan.failing, ...mergeErrors];
   const approvals = plan.approvals.filter((p) => p.kind === "deps_update");
@@ -48,21 +65,30 @@ function depsUpdateCheck(plan, merged, mergeErrors, deployErrors, runUrl) {
   } else {
     const parts = [];
     if (merged.length) parts.push(`${merged.length} gemergt`);
-    if (plan.waiting.length) parts.push(`${plan.waiting.length} warten auf Checks`);
+    if (plan.waiting.length) parts.push(`${plan.waiting.length} warten (Checks oder Lockfile)`);
     detail = parts.length ? parts.join(", ") : "keine offenen Updates";
   }
-  return { kind: "deps_update", status, detail: cut(detail), url, expected_every_hours: EXPECTED_EVERY_HOURS };
+  const check = { kind: "deps_update", status, detail: cut(detail), url, expected_every_hours: EXPECTED_EVERY_HOURS };
+  return withPrs(check, approvals);
 }
 
 function depsMajorCheck(plan, runUrl) {
   const majors = plan.approvals.filter((p) => p.kind === "deps_major");
-  if (majors.length === 0) return { kind: "deps_major", status: "ok", detail: "keine Major-Updates offen", url: runUrl };
-  return {
+  const blocked = plan.blocked ?? [];
+  const blockedText = blocked.length ? `Checks rot, braucht Anpassung: ${listPrs(blocked)}` : "";
+  if (majors.length === 0 && blocked.length === 0) {
+    return { kind: "deps_major", status: "ok", detail: "keine Major-Updates offen", url: runUrl };
+  }
+  if (majors.length === 0) {
+    return { kind: "deps_major", status: "warn", detail: cut(blockedText), url: blocked[0].url };
+  }
+  const waiting = `Major-Updates warten auf Klick: ${majors.map((p) => `#${p.number} ${p.title}`).slice(0, 3).join("; ")}`;
+  return withPrs({
     kind: "deps_major",
     status: "pending_approval",
-    detail: cut(`Major-Updates warten auf Klick: ${majors.map((p) => `#${p.number} ${p.title}`).slice(0, 3).join("; ")}`),
+    detail: cut(blockedText ? `${waiting} · ${blockedText}` : waiting),
     url: majors[0].url,
-  };
+  }, majors);
 }
 
 export function buildReport({ plan, merged = [], mergeErrors = [], deployErrors = [], smokeResult, runUrl }) {
@@ -73,8 +99,8 @@ export function buildReport({ plan, merged = [], mergeErrors = [], deployErrors 
       depsMajorCheck(plan, runUrl),
     ],
     events: merged.map((pr) => ({
-      kind: "deps_update",
-      summary: cut(`PR #${pr.number} automatisch gemergt (${pr.bump}): ${pr.title}`),
+      kind: pr.kind ?? "deps_update",
+      summary: cut(`PR #${pr.number} ${pr.approved ? "nach Freigabe" : "automatisch"} gemergt (${pr.bump}): ${pr.title}`),
       url: pr.url,
     })),
   };
