@@ -2,17 +2,26 @@
 // does not answer 2xx or lacks its expected text. The maintenance run reads
 // the job result (needs.<job>.result) as smoke-result.
 import { appendFileSync } from "node:fs";
-import { parseChecks, runCheck } from "./lib/checks.mjs";
+import { parseChecks, runChecks } from "./lib/checks.mjs";
 
 function summary(line) {
   console.log(line);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
 }
 
+function intInput(name, min, max) {
+  const value = Number((process.env[`INPUT_${name.toUpperCase()}`] ?? "").trim());
+  if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${name} must be an integer ${min}..${max}`);
+  return value;
+}
+
 async function main() {
   const checks = parseChecks(process.env["INPUT_CHECKS"] ?? "");
   if (checks.length === 0) throw new Error("no checks given (input checks)");
-  const failures = (await Promise.all(checks.map((c) => runCheck(c)))).filter(Boolean);
+  const failures = await runChecks(checks, {
+    attempts: intInput("attempts", 1, 5),
+    delayMs: intInput("retry-delay-seconds", 0, 600) * 1000,
+  });
   summary(`## Funktionstest (HTTP) — ${checks.length - failures.length}/${checks.length} ok`);
   for (const f of failures) summary(`- ${f}`);
   if (failures.length > 0) {

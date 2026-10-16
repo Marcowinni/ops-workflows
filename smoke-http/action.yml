@@ -10,6 +10,17 @@ inputs:
       Eine Prüfung pro Zeile: "https://… | erwarteter Text" (Text optional,
       Zeilen mit # werden ignoriert).
     required: true
+  attempts:
+    description: >-
+      Versuche pro Seite (1–5). Rote Seiten werden nach retry-delay-seconds
+      erneut geprüft. Für den Test nach dem Deploy 2 empfohlen: dort löst rot
+      einen Rollback aus.
+    required: false
+    default: "1"
+  retry-delay-seconds:
+    description: Wartezeit vor einem weiteren Versuch.
+    required: false
+    default: "60"
 
 runs:
   using: node24

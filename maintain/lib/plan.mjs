@@ -2,7 +2,8 @@
 // Limit from ADR 0044: patch/minor go live without a click only when the PR's
 // checks are green AND the solution has a passing automated smoke test.
 // Majors, unclear updates and PRs that change workflow files need a click
-// (GITHUB_TOKEN may not merge changes under .github/workflows).
+// (GITHUB_TOKEN may not merge changes under .github/workflows). So does an
+// update the check after deploy already rolled back once (regression.mjs).
 
 const STALE_DAYS = 3;
 
@@ -18,8 +19,9 @@ export function touchesWorkflows(files) {
 }
 
 /**
- * prs: [{ number, title, url, files, bump, checks: {state, failing, missing}, mergeable, createdAt }]
+ * prs: [{ number, title, url, files, bump, checks: {state, failing, missing}, mergeable, createdAt, regression? }]
  * mergeable: true | false | null (null = GitHub still computing).
+ * regression: reason string when the update was rolled back before (regressionOf).
  * Returns buckets; `merge` never contains two PRs that change the same file —
  * after one lockfile PR lands, Dependabot rebases the others and the next run
  * takes the next one.
@@ -47,6 +49,10 @@ export function planMerges(prs, gate, now = Date.now()) {
     }
     if (inGitHub) {
       plan.approvals.push({ ...pr, kind: "deps_update", inGitHub, reason: "ändert Workflows — Merge in GitHub" });
+      continue;
+    }
+    if (pr.regression) {
+      plan.approvals.push({ ...pr, kind: "deps_update", reason: pr.regression });
       continue;
     }
     if (pr.checks.state === "pending" || pr.mergeable !== true) {

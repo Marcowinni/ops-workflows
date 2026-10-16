@@ -1,0 +1,69 @@
+name: TW Test nach Deploy
+description: >-
+  Wertet den Funktionstest gegen den frisch deployten Merge aus (ADR 0044).
+  Rot oder Deploy fehlgeschlagen → rollt genau die Merges dieses Laufs
+  zurück, löst den Deploy neu aus, sperrt die Version für Auto-Merge und
+  meldet an das TW Business OS.
+author: TW Projects
+
+inputs:
+  report-token:
+    description: Melde-Token der Lösung (Secret OPS_REPORT_TOKEN).
+    required: true
+  merge-state:
+    description: maintain-Output merge-state (needs.<maintenance-job>.outputs.merge-state). Leer = nichts zu tun.
+    required: true
+  pre-smoke-result:
+    description: >-
+      Ergebnis des Funktionstests vor dem Merge (needs.<smoke-job>.result).
+      Zurückgerollt wird nur, wenn er success war.
+    required: false
+    default: none
+  deploy-result:
+    description: wait-deploy-Output result (needs.<smoke-after-job>.outputs.deploy).
+    required: false
+    default: ""
+  deploy-detail:
+    description: wait-deploy-Output detail, erscheint im Bericht.
+    required: false
+    default: ""
+  smoke-result:
+    description: Ergebnis des Funktionstests nach dem Deploy (needs.<smoke-after-job>.result).
+    required: false
+    default: ""
+  rollback:
+    description: false = nur melden, nie zurückrollen.
+    required: false
+    default: "true"
+  deploy-hooks:
+    description: Deploy-Hook-URLs (Secret), nach dem Rollback ausgelöst — dieselben wie bei maintain.
+    required: false
+    default: ""
+  environments:
+    description: Wie bei wait-deploy, für den Deploy des Rollbacks.
+    required: false
+    default: ""
+  min-deployments:
+    description: Wie bei wait-deploy, für den Deploy des Rollbacks.
+    required: false
+    default: "1"
+  timeout-minutes:
+    description: Höchstens so lange auf den Deploy des Rollbacks warten.
+    required: false
+    default: "15"
+  report-url:
+    description: Empfänger im Business OS (Edge Function solution_report).
+    required: false
+    default: https://ngqrirdjagopzkvcsovw.supabase.co/functions/v1/solution_report
+  github-token:
+    description: Token mit contents:write (Rollback-Commit + Tag) + deployments:read.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  rolled-back:
+    description: SHA des Rollback-Commits, leer ohne Rollback.
+
+runs:
+  using: node24
+  main: main.mjs
