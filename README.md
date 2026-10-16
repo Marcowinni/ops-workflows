@@ -16,12 +16,14 @@ Das Repo ist öffentlich, damit es auch von öffentlichen Repos und nach einer �
 3. **Braucht einen Klick:**
    - Major-Updates und Updates, deren Art unklar ist,
    - Updates, die `.github/workflows/` ändern (`GITHUB_TOKEN` darf keine Workflows ändern),
-   - alle Updates, solange es keinen Funktionstest oder keine Pflicht-Checks gibt.
+   - alle Updates, solange es keinen Funktionstest oder keine Pflicht-Checks gibt,
+   - Updates, die der Test nach dem Deploy schon einmal zurückgerollt hat (Regressions-Sperre, siehe unten).
 4. **Deploy:** Nach einem Merge werden die `deploy-hooks` ausgelöst. Grund: Ein Merge mit `GITHUB_TOKEN` löst keine Workflows aus, und Vercel deployt keine Commits von Dependabot.
 5. **Bericht** an das Business OS (zuerst Status + wartende PRs, nach Merges ein zweiter mit Nachweis) (`solution_report`):
    - je ein Status für `smoke_test`, `deps_update` und `deps_major`,
    - ein Nachweis-Eintrag pro Merge.
    Bleibt der Bericht länger als 30 h aus, meldet das OS den Lauf als verstummt.
+6. **Test nach dem Deploy** (empfohlen, eigene Jobs): Der Lauf wartet auf den Produktions-Deploy des Merges, prüft mit demselben Funktionstest erneut und rollt bei Rot automatisch zurück. Siehe [Test nach dem Deploy](#test-nach-dem-deploy-mit-auto-rollback).
 
 ## Takt in Wellen
 
@@ -105,6 +107,116 @@ Für Lösungen ohne eigenen E2E-Test gibt es einen HTTP-Smoke als Startpunkt. Je
             https://www.example.ch/kontakt | Kontakt
 ```
 
+`attempts: 2` prüft rote Seiten nach `retry-delay-seconds` (Standard 60) ein zweites Mal. Für den Test nach dem Deploy empfohlen: Dort löst Rot einen Rollback aus, ein einzelner Netz-Aussetzer soll das nicht.
+
+## Test nach dem Deploy mit Auto-Rollback
+
+Der Funktionstest vor dem Merge prüft die alte Version. Ohne zweiten Test fällt ein Update, das Produktion bricht, erst im nächsten Lauf auf (bis 24 h). Deshalb nach jedem Merge (Entscheid Marco 2026-10-16, Option C):
+
+1. **`wait-deploy`** wartet auf den Produktions-Deploy des Merge-Commits. Vercel (`Production`, `Production – <projekt>`) und Railway (`<projekt> / production`) melden ihre Deploys an GitHub, darum reicht `GITHUB_TOKEN` mit `deployments: read`, kein Hosting-Token. Pro Umgebung zählt der neueste Deploy; erst wenn sich 60 s nichts mehr ändert, gilt er als fertig. Timeout 15 min.
+2. **Derselbe Funktionstest** läuft gegen die neue Version (YAML-Anker: eine Definition für beide Jobs).
+3. **`verify-deploy`** wertet aus und meldet an das Business OS:
+   - grün → `smoke_test` ok mit den PR-Nummern, Nachweis-Eintrag,
+   - Funktionstest gelaufen und rot → `smoke_test` fail, **Rollback mit Regressions-Sperre**,
+   - Deploy fehlgeschlagen → `deps_update` fail. Produktion läuft dann noch auf dem alten Stand. **Rollback ohne Sperre** nur, wenn der Stand vor dem Merge grün deployt war (der Branch soll deploybar bleiben; ein Build-Fehler kann vorübergehend sein), sonst nur Meldung,
+   - Deploy nicht bestätigt (Timeout), Test abgebrochen oder Einrichtung kaputt (Download, Installation) → `smoke_test` warn, kein Rollback,
+   - kein Funktionstest eingerichtet (Job übersprungen) → nur Nachweis «Deploy live», Status bleibt «kein automatischer Funktionstest».
+
+   «Rot» heisst: Der Test-Schritt ist gelaufen und meldet `result=fail`. `smoke-http` setzt diesen Output selbst; ein eigener Test-Schritt setzt ihn mit `echo "result=fail" >> "$GITHUB_OUTPUT"`. Ein roter Job ohne `fail` (Installation, Download) löst nie einen Rollback aus. Installation darum in einen eigenen Schritt vor dem Test.
+
+   Rot sperrt im OS die Welle 2, bis ein Lauf wieder grün ist. Der Status bleibt auch nach einem Rollback rot, weil jemand das Update anschauen muss. `verify-deploy` meldet immer, auch wenn der Rollback an einem API-Fehler scheitert.
+
+**Rollback:** ein neuer Commit auf dem Default-Branch mit dem Stand vor dem Merge, per Fast-Forward. Danach Deploy-Hooks und Warten auf den Deploy des Rollbacks. Git und Produktion bleiben gleich. Ein Revert-PR geht nicht, weil `GITHUB_TOKEN` in unseren Repos keine PRs öffnen darf. Schutzregeln:
+- nach rotem Test nur, wenn der Funktionstest **vor** dem Merge grün war (sonst kommt Rot vielleicht nicht vom Update),
+- nur die Merges dieses Laufs: Zwischen Stand vorher und Kopf dürfen keine fremden Commits liegen, und der Branch darf sich seit dem Merge nicht bewegt haben, sonst nur Meldung,
+- Läufe dürfen sich nicht überlappen: `concurrency: { group: maintenance, cancel-in-progress: false }` im Workflow,
+- `rollback: false` schaltet ihn ab (nur melden).
+
+**Regressions-Sperre** (nur nach rotem Test): Der Rollback-Commit nennt jede zurückgerollte Version (`ops-regression: paket@version`) und bekommt den Tag `ops-regression/<lauf>`. Öffnet Dependabot dasselbe Update neu, merged der Lauf es nicht mehr automatisch, sondern legt es als Freigabe vor. Eine neuere Version ist frei. Tag löschen hebt die Sperre auf.
+
+Einbinden: die Jobs `smoke` und `maintenance` wie oben, dazu:
+
+```yaml
+# Läufe nie überlappen lassen: ein zweiter Lauf könnte fremde Merges zurückrollen.
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    # … wie oben, aber die Schritte mit Anker (id: http liefert result):
+    steps: &smoke-steps
+      - id: http
+        uses: Marcowinni/ops-workflows/smoke-http@v1
+        with:
+          attempts: 2
+          checks: |
+            https://www.example.ch | Willkommen
+
+  maintenance:
+    # … wie oben, plus:
+    outputs:
+      deployed-sha: ${{ steps.maintain.outputs.deployed-sha }}
+      merge-state: ${{ steps.maintain.outputs.merge-state }}
+    steps:
+      - id: maintain
+        uses: Marcowinni/ops-workflows/maintain@v1
+        with: # … wie oben
+
+  deploy:
+    name: Warten auf Deploy
+    needs: maintenance
+    # !cancelled(): läuft auch, wenn nur der Bericht ans OS scheiterte
+    if: ${{ !cancelled() && needs.maintenance.outputs.deployed-sha != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      deployments: read
+    outputs:
+      result: ${{ steps.wait.outputs.result }}
+      detail: ${{ steps.wait.outputs.detail }}
+    steps:
+      - id: wait
+        uses: Marcowinni/ops-workflows/wait-deploy@v1
+        with:
+          sha: ${{ needs.maintenance.outputs.deployed-sha }}
+
+  smoke-after:
+    name: Funktionstest nach Deploy
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.http.outputs.result }}
+    steps: *smoke-steps
+
+  verify-deploy:
+    name: Test nach Deploy auswerten
+    needs: [smoke, maintenance, deploy, smoke-after]
+    if: ${{ !cancelled() && needs.maintenance.outputs.deployed-sha != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      deployments: read
+    steps:
+      - uses: Marcowinni/ops-workflows/verify-deploy@v1
+        with:
+          report-token: ${{ secrets.OPS_REPORT_TOKEN }}
+          merge-state: ${{ needs.maintenance.outputs.merge-state }}
+          pre-smoke-result: ${{ needs.smoke.result }}
+          deploy-result: ${{ needs.deploy.outputs.result }}
+          deploy-detail: ${{ needs.deploy.outputs.detail }}
+          smoke-job: ${{ needs.smoke-after.result }}
+          smoke-result: ${{ needs.smoke-after.outputs.result }}
+          deploy-hooks: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+```
+
+Warum vier Jobs statt einem: Der Funktionstest führt Repo-Code mit frisch aktualisierten Paketen aus (`npm ci`). Er läuft darum nur mit Leserechten; den Schreib-Token für den Rollback sieht nur `verify-deploy`, das keinen Repo-Code ausführt. Mehrere Vercel-Projekte in einem Repo: `min-deployments` (Anzahl Projekte) oder `environments` bei `wait-deploy` und `verify-deploy` setzen. Hat `smoke` eine Job-Bedingung (`if:`), braucht `smoke-after` dieselbe — sonst laufen leere Schritte und gelten als «nicht getestet». Mehrere Test-Schritte: Job-Output `result` = `fail`, wenn einer `fail` meldet, sonst `pass` (Beispiel in `project-template`).
+
 ## Melde-Token einrichten
 
 Der Token liegt nur als Secret im Repo. Das Business OS kennt nur seinen sha256.
@@ -123,6 +235,8 @@ gh secret set OPS_REPORT_TOKEN --repo Marcowinni/<repo> --body "$TOKEN"
 `v1` zeigt auf den neuesten kompatiblen Stand und wird bei Änderungen nachgezogen. Inkompatible Änderungen (Inputs, Bericht-Format) gibt es nur als `v2`.
 
 ## Entwicklung
+
+Aufbau und Datenfluss: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```bash
 node --test

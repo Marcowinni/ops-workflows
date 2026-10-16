@@ -15,7 +15,7 @@ export function createGitHub({ token, repo, apiUrl = "https://api.github.com" })
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;
     if (!res.ok) {
-      const err = new Error(`${method} ${path} → ${res.status}: ${data?.message ?? text}`);
+      const err = new Error(`${method} ${path || "/"} → ${res.status}: ${data?.message ?? text}`);
       err.status = res.status;
       throw err;
     }
@@ -23,6 +23,11 @@ export function createGitHub({ token, repo, apiUrl = "https://api.github.com" })
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function gitCommit(sha) {
+    const c = await request("GET", `/git/commits/${sha}`);
+    return { tree: c.tree.sha, parents: c.parents.map((p) => p.sha), message: c.message };
+  }
 
   return {
     async dependabotPulls() {
@@ -54,6 +59,37 @@ export function createGitHub({ token, repo, apiUrl = "https://api.github.com" })
     /** sha pins the merge to the commit whose checks were evaluated. */
     async merge(number, sha, method) {
       return request("PUT", `/pulls/${number}/merge`, { sha, merge_method: method });
+    },
+    /** Default branch (main or master) and its head commit. */
+    async branchHead() {
+      const { default_branch: branch } = await request("GET", "");
+      const head = await request("GET", `/branches/${branch}`);
+      return { branch, sha: head.commit.sha };
+    },
+    gitCommit,
+    async createCommit({ message, tree, parents }) {
+      return (await request("POST", "/git/commits", { message, tree, parents })).sha;
+    },
+    /** force:false = fast-forward only; GitHub answers 422 when the branch moved meanwhile. */
+    async fastForward(branch, sha) {
+      return request("PATCH", `/git/refs/heads/${branch}`, { sha, force: false });
+    },
+    async createTag(name, sha) {
+      return request("POST", "/git/refs", { ref: `refs/tags/${name}`, sha });
+    },
+    /** Messages of the rollback commits tagged ops-regression/* (regression.mjs). */
+    async regressionMessages() {
+      const refs = await request("GET", "/git/matching-refs/tags/ops-regression/");
+      const commits = refs.filter((r) => r.object?.type === "commit");
+      return Promise.all(commits.map(async (r) => (await gitCommit(r.object.sha)).message));
+    },
+    async deployments(sha) {
+      return request("GET", `/deployments?sha=${sha}&per_page=100`);
+    },
+    /** Statuses come newest first; a deployment without one is still pending. */
+    async deploymentState(id) {
+      const [latest] = await request("GET", `/deployments/${id}/statuses?per_page=1`);
+      return latest?.state ?? "pending";
     },
   };
 }

@@ -1,0 +1,47 @@
+name: TW Warten auf Deploy
+description: >-
+  Wartet, bis der Produktions-Deploy eines Commits fertig ist (ADR 0044,
+  Test nach dem Deploy). Liest die Deployments, die Vercel und Railway an
+  GitHub melden — kein Hosting-Token nötig. Schlägt fehl, wenn der Deploy
+  fehlschlägt oder nicht rechtzeitig fertig wird.
+author: TW Projects
+
+inputs:
+  sha:
+    description: Commit, dessen Deploy abgewartet wird (maintain-Output deployed-sha).
+    required: true
+  environments:
+    description: >-
+      GitHub-Umgebungen, die fertig sein müssen (Komma oder Zeilen), z.B.
+      "Production – core". Leer = alle Produktions-Umgebungen des Commits
+      (Vercel "Production…", Railway "… / production").
+    required: false
+    default: ""
+  min-deployments:
+    description: Mindestanzahl Produktions-Umgebungen, bevor «fertig» gilt (z.B. Anzahl Vercel-Projekte).
+    required: false
+    default: "1"
+  timeout-minutes:
+    description: Höchstens so lange warten.
+    required: false
+    default: "15"
+  settle-seconds:
+    description: >-
+      So lange darf sich nach dem letzten Statuswechsel nichts mehr ändern
+      (ein Hook-Deploy kann einem blockierten Git-Deploy folgen; Domain-Zuweisung).
+    required: false
+    default: "60"
+  github-token:
+    description: Token mit deployments:read.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  result:
+    description: success | failure | timeout | error
+  detail:
+    description: Ein Satz zum Ergebnis.
+
+runs:
+  using: node24
+  main: main.mjs

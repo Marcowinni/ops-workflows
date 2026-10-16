@@ -30,3 +30,21 @@ export async function runCheck({ url, expect }, fetchFn = fetch, timeoutMs = 20_
   }
   return null;
 }
+
+/**
+ * Run all checks; the failing ones get up to `attempts - 1` more tries after
+ * `delayMs`. After a deploy a red check triggers a rollback, so one network
+ * hiccup or cold start must not count. Returns the reasons of the last try.
+ */
+export async function runChecks(checks, { attempts = 1, delayMs = 60_000, run = runCheck, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) } = {}) {
+  let pending = checks;
+  let failures = [];
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const results = await Promise.all(pending.map((c) => run(c)));
+    failures = results.filter(Boolean);
+    pending = pending.filter((_, i) => results[i]);
+    if (pending.length === 0 || attempt === attempts) break;
+    await sleep(delayMs);
+  }
+  return failures;
+}

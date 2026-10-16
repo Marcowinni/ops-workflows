@@ -49,6 +49,15 @@ inputs:
 outputs:
   merged:
     description: Kommagetrennte Nummern der gemergten PRs.
+  deployed-sha:
+    description: >-
+      Kopf des Default-Branch nach Merge und Deploy-Hooks (leer ohne Merge).
+      Für wait-deploy: auf diesen Commit wartet der Test nach dem Deploy.
+  merge-state:
+    description: >-
+      JSON mit Stand vor/nach dem Merge und den gemergten PRs (leer ohne
+      Merge). Für verify-deploy, das bei rotem Test genau diese Merges
+      zurückrollt.
 
 runs:
   using: node24
