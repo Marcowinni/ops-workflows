@@ -22,12 +22,15 @@ const ROLLBACK_DEPLOY = {
   timeout: "Rollback-Deploy nicht bestätigt — bitte prüfen",
 };
 
-function rollbackText({ decision, rollback, rollbackDeploy, hookErrors }) {
+function rollbackText({ decision, rollback, rollbackDeploy, hookErrors, error }) {
   if (decision.blocker) return `kein Rollback: ${decision.blocker} — bitte prüfen`;
+  if (!rollback) return `kein Rollback: Fehler (${error ?? "unbekannt"}) — bitte prüfen`;
   if (!rollback.done) return `kein Rollback: ${rollback.reason} — bitte prüfen`;
   const parts = [`automatisch zurückgerollt (${rollback.sha.slice(0, 7)})`];
-  parts.push(ROLLBACK_DEPLOY[rollbackDeploy?.result] ?? "Rollback-Deploy unklar — bitte prüfen");
+  if (rollbackDeploy) parts.push(ROLLBACK_DEPLOY[rollbackDeploy.result] ?? "Rollback-Deploy unklar — bitte prüfen");
+  else parts.push(`Rollback-Deploy nicht geprüft (Fehler: ${error ?? "unbekannt"}) — bitte prüfen`);
   if (hookErrors.length > 0) parts.push(`Deploy-Hook fehlgeschlagen (${hookErrors.length})`);
+  if (!decision.lock) parts.push("ohne Regressions-Sperre (Deploy-Fehler kann vorübergehend sein)");
   if (rollback.lockError) parts.push("Regressions-Sperre fehlt (Tag nicht gesetzt)");
   return parts.join(", ");
 }
@@ -35,8 +38,9 @@ function rollbackText({ decision, rollback, rollbackDeploy, hookErrors }) {
 /**
  * state: parsed merge-state · decision: decide() · rollback: rollBack() result or null
  * rollbackDeploy: waitForDeploy() result for the rollback commit or null
+ * error: message of an API error during the rollback (the report goes out anyway)
  */
-export function buildVerifyReport({ state, decision, deployDetail = "", rollback = null, rollbackDeploy = null, hookErrors = [], runUrl, repoUrl }) {
+export function buildVerifyReport({ state, decision, deployDetail = "", rollback = null, rollbackDeploy = null, hookErrors = [], error = null, runUrl, repoUrl }) {
   const prs = listMerges(state.merges, false);
   const url = rollback?.done ? `${repoUrl}/commit/${rollback.sha}` : runUrl;
   const check = (kind, status, detail) => ({ kind, status, detail: cut(detail), url, expected_every_hours: EXPECTED_EVERY_HOURS });
@@ -52,15 +56,15 @@ export function buildVerifyReport({ state, decision, deployDetail = "", rollback
     return { checks: [], events: [{ kind: "deps_update", summary: cut(`Deploy live nach Update: ${prs} (kein Funktionstest nach Deploy)`), url: runUrl }] };
   }
   if (decision.outcome === "unconfirmed") {
-    let why = "Funktionstest nach Deploy abgebrochen";
+    let why = "Funktionstest nach Deploy nicht gelaufen (Einrichtung kaputt oder abgebrochen)";
     if (decision.deployConfirmed === false) why = deployDetail ? `Deploy nicht bestätigt (${deployDetail})` : "Deploy nicht bestätigt";
     return { checks: [check("smoke_test", "warn", `${why}: ${prs}`)], events: [] };
   }
 
-  const text = rollbackText({ decision, rollback, rollbackDeploy, hookErrors });
+  const text = rollbackText({ decision, rollback, rollbackDeploy, hookErrors, error });
   const [kind, what] = decision.outcome === "red"
     ? ["smoke_test", "Funktionstest rot nach Update"]
-    : ["deps_update", "Deploy fehlgeschlagen nach Update"];
+    : ["deps_update", "Deploy fehlgeschlagen nach Update (Produktion lief weiter auf dem alten Stand)"];
   const detail = `${what}: ${listMerges(state.merges, true)} · ${text}`;
   return {
     checks: [check(kind, "fail", detail)],

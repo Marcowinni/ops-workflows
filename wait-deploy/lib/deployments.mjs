@@ -43,6 +43,21 @@ function describe(evaluation) {
     : `Deploy fehlgeschlagen: ${evaluation.failed.join(", ")}`;
 }
 
+/** Production deployments of `sha` with their latest state: [{ id, environment, state }]. */
+async function productionDeployments(gh, sha, environments) {
+  const production = (await gh.deployments(sha)).filter((d) => isProduction(d.environment, environments));
+  return Promise.all(production.map(async (d) => ({
+    id: d.id,
+    environment: d.environment,
+    state: await gh.deploymentState(d.id),
+  })));
+}
+
+/** One look, no waiting: e.g. whether the commit before the merge was deployed green. */
+export async function deployStateOnce(gh, sha, { environments = [], minDeployments = 1 } = {}) {
+  return evaluateDeployments(await productionDeployments(gh, sha, environments), { environments, minDeployments });
+}
+
 /**
  * Poll until the production deploys of `sha` are final and nothing changed
  * for `settleMs` (a hook deploy can follow a blocked git deploy; aliasing
@@ -55,12 +70,7 @@ export async function waitForDeploy(gh, sha, options = {}, clock = realClock) {
   let changedAt = start;
   let seen = [];
   while (clock.now() - start < timeoutMs) {
-    const production = (await gh.deployments(sha)).filter((d) => isProduction(d.environment, environments));
-    const deployments = await Promise.all(production.map(async (d) => ({
-      id: d.id,
-      environment: d.environment,
-      state: await gh.deploymentState(d.id),
-    })));
+    const deployments = await productionDeployments(gh, sha, environments);
     const next = deployments.map((d) => `${d.id}:${d.state}`).sort().join(",");
     if (next !== fingerprint) {
       fingerprint = next;

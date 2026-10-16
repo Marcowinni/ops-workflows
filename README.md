@@ -117,28 +117,37 @@ Der Funktionstest vor dem Merge prüft die alte Version. Ohne zweiten Test fäll
 2. **Derselbe Funktionstest** läuft gegen die neue Version (YAML-Anker: eine Definition für beide Jobs).
 3. **`verify-deploy`** wertet aus und meldet an das Business OS:
    - grün → `smoke_test` ok mit den PR-Nummern, Nachweis-Eintrag,
-   - Funktionstest rot → `smoke_test` fail, **Rollback**,
-   - Deploy fehlgeschlagen → `deps_update` fail, **Rollback** (Produktion läuft noch alt, der Branch muss aber deploybar bleiben),
-   - Deploy nicht bestätigt (Timeout) oder Test abgebrochen → `smoke_test` warn, kein Rollback,
+   - Funktionstest gelaufen und rot → `smoke_test` fail, **Rollback mit Regressions-Sperre**,
+   - Deploy fehlgeschlagen → `deps_update` fail. Produktion läuft dann noch auf dem alten Stand. **Rollback ohne Sperre** nur, wenn der Stand vor dem Merge grün deployt war (der Branch soll deploybar bleiben; ein Build-Fehler kann vorübergehend sein), sonst nur Meldung,
+   - Deploy nicht bestätigt (Timeout), Test abgebrochen oder Einrichtung kaputt (Download, Installation) → `smoke_test` warn, kein Rollback,
    - kein Funktionstest eingerichtet (Job übersprungen) → nur Nachweis «Deploy live», Status bleibt «kein automatischer Funktionstest».
 
-   Rot sperrt im OS die Welle 2, bis ein Lauf wieder grün ist. Der Status bleibt auch nach einem Rollback rot, weil jemand das Update anschauen muss.
+   «Rot» heisst: Der Test-Schritt ist gelaufen und meldet `result=fail`. `smoke-http` setzt diesen Output selbst; ein eigener Test-Schritt setzt ihn mit `echo "result=fail" >> "$GITHUB_OUTPUT"`. Ein roter Job ohne `fail` (Installation, Download) löst nie einen Rollback aus. Installation darum in einen eigenen Schritt vor dem Test.
+
+   Rot sperrt im OS die Welle 2, bis ein Lauf wieder grün ist. Der Status bleibt auch nach einem Rollback rot, weil jemand das Update anschauen muss. `verify-deploy` meldet immer, auch wenn der Rollback an einem API-Fehler scheitert.
 
 **Rollback:** ein neuer Commit auf dem Default-Branch mit dem Stand vor dem Merge, per Fast-Forward. Danach Deploy-Hooks und Warten auf den Deploy des Rollbacks. Git und Produktion bleiben gleich. Ein Revert-PR geht nicht, weil `GITHUB_TOKEN` in unseren Repos keine PRs öffnen darf. Schutzregeln:
-- nur wenn der Funktionstest **vor** dem Merge grün war (sonst kommt Rot vielleicht nicht vom Update),
+- nach rotem Test nur, wenn der Funktionstest **vor** dem Merge grün war (sonst kommt Rot vielleicht nicht vom Update),
 - nur die Merges dieses Laufs: Zwischen Stand vorher und Kopf dürfen keine fremden Commits liegen, und der Branch darf sich seit dem Merge nicht bewegt haben, sonst nur Meldung,
+- Läufe dürfen sich nicht überlappen: `concurrency: { group: maintenance, cancel-in-progress: false }` im Workflow,
 - `rollback: false` schaltet ihn ab (nur melden).
 
-**Regressions-Sperre:** Der Rollback-Commit nennt jede zurückgerollte Version (`ops-regression: paket@version`) und bekommt den Tag `ops-regression/<lauf>`. Öffnet Dependabot dasselbe Update neu, merged der Lauf es nicht mehr automatisch, sondern legt es als Freigabe vor. Eine neuere Version ist frei. Tag löschen hebt die Sperre auf.
+**Regressions-Sperre** (nur nach rotem Test): Der Rollback-Commit nennt jede zurückgerollte Version (`ops-regression: paket@version`) und bekommt den Tag `ops-regression/<lauf>`. Öffnet Dependabot dasselbe Update neu, merged der Lauf es nicht mehr automatisch, sondern legt es als Freigabe vor. Eine neuere Version ist frei. Tag löschen hebt die Sperre auf.
 
 Einbinden: die Jobs `smoke` und `maintenance` wie oben, dazu:
 
 ```yaml
+# Läufe nie überlappen lassen: ein zweiter Lauf könnte fremde Merges zurückrollen.
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+
 jobs:
   smoke:
-    # … wie oben, aber die Schritte mit Anker:
+    # … wie oben, aber die Schritte mit Anker (id: http liefert result):
     steps: &smoke-steps
-      - uses: Marcowinni/ops-workflows/smoke-http@v1
+      - id: http
+        uses: Marcowinni/ops-workflows/smoke-http@v1
         with:
           attempts: 2
           checks: |
@@ -157,7 +166,8 @@ jobs:
   deploy:
     name: Warten auf Deploy
     needs: maintenance
-    if: ${{ needs.maintenance.outputs.deployed-sha != '' }}
+    # !cancelled(): läuft auch, wenn nur der Bericht ans OS scheiterte
+    if: ${{ !cancelled() && needs.maintenance.outputs.deployed-sha != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -174,10 +184,13 @@ jobs:
   smoke-after:
     name: Funktionstest nach Deploy
     needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+    outputs:
+      result: ${{ steps.http.outputs.result }}
     steps: *smoke-steps
 
   verify-deploy:
@@ -197,11 +210,12 @@ jobs:
           pre-smoke-result: ${{ needs.smoke.result }}
           deploy-result: ${{ needs.deploy.outputs.result }}
           deploy-detail: ${{ needs.deploy.outputs.detail }}
-          smoke-result: ${{ needs.smoke-after.result }}
+          smoke-job: ${{ needs.smoke-after.result }}
+          smoke-result: ${{ needs.smoke-after.outputs.result }}
           deploy-hooks: ${{ secrets.VERCEL_DEPLOY_HOOK }}
 ```
 
-Warum vier Jobs statt einem: Der Funktionstest führt Repo-Code mit frisch aktualisierten Paketen aus (`npm ci`). Er läuft darum nur mit Leserechten; den Schreib-Token für den Rollback sieht nur `verify-deploy`, das keinen Repo-Code ausführt. Mehrere Vercel-Projekte in einem Repo: `min-deployments` (Anzahl Projekte) oder `environments` bei `wait-deploy` und `verify-deploy` setzen. Hat `smoke` eine Job-Bedingung (`if:`), braucht `smoke-after` dieselbe — sonst laufen leere Schritte und gelten als grün.
+Warum vier Jobs statt einem: Der Funktionstest führt Repo-Code mit frisch aktualisierten Paketen aus (`npm ci`). Er läuft darum nur mit Leserechten; den Schreib-Token für den Rollback sieht nur `verify-deploy`, das keinen Repo-Code ausführt. Mehrere Vercel-Projekte in einem Repo: `min-deployments` (Anzahl Projekte) oder `environments` bei `wait-deploy` und `verify-deploy` setzen. Hat `smoke` eine Job-Bedingung (`if:`), braucht `smoke-after` dieselbe — sonst laufen leere Schritte und gelten als «nicht getestet». Mehrere Test-Schritte: Job-Output `result` = `fail`, wenn einer `fail` meldet, sonst `pass` (Beispiel in `project-template`).
 
 ## Melde-Token einrichten
 

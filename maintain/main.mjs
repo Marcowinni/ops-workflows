@@ -85,6 +85,20 @@ function mergeState(before, after, merged) {
   };
 }
 
+/**
+ * Branch head after the merges and hooks (what the hooks deploy). An API
+ * error here must not cost the proof report: fall back to the last merge
+ * commit — verify-deploy re-reads the head before it touches anything.
+ */
+async function headAfterMerges(gh, before, merged) {
+  try {
+    return await gh.branchHead();
+  } catch (e) {
+    console.error(`::warning::Branch-Kopf nach dem Merge nicht lesbar (${e.message}) — nehme den letzten Merge-Commit`);
+    return { branch: before.branch, sha: merged.at(-1).mergeSha };
+  }
+}
+
 async function main() {
   if (!reportToken) throw new Error("report-token missing (secret OPS_REPORT_TOKEN)");
   const gh = createGitHub({ token: input("github-token"), repo });
@@ -116,15 +130,17 @@ async function main() {
   if (dryRun && plan.merge.length) summary(`Würde mergen: ${plan.merge.map((p) => `#${p.number}`).join(", ")}`);
   const deployErrors = merged.length > 0 ? await triggerDeployHooks(deployHooks) : [];
   // Read after the hooks: they deploy whatever the branch head is now.
-  const after = merged.length > 0 ? await gh.branchHead() : null;
+  const after = merged.length > 0 ? await headAfterMerges(gh, before, merged) : null;
+
+  // Hand-over before the report: if the OS is down, the merges still get
+  // their check after deploy (the follow-up jobs run on !cancelled()).
+  output("merged", merged.map((p) => p.number).join(","));
+  output("deployed-sha", after?.sha ?? "");
+  output("merge-state", after ? JSON.stringify(mergeState(before, after, merged)) : "");
 
   const payload = buildReport({ plan, merged, mergeErrors, deployErrors, smokeResult, runUrl, scheduleNote: schedule.note });
   await post(payload);
   for (const c of payload.checks) summary(`- ${c.kind}: ${c.status} — ${c.detail}`);
-
-  output("merged", merged.map((p) => p.number).join(","));
-  output("deployed-sha", after?.sha ?? "");
-  output("merge-state", after ? JSON.stringify(mergeState(before, after, merged)) : "");
 }
 
 main().catch((e) => {

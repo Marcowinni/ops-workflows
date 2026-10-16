@@ -1,9 +1,10 @@
 name: TW Test nach Deploy
 description: >-
   Wertet den Funktionstest gegen den frisch deployten Merge aus (ADR 0044).
-  Rot oder Deploy fehlgeschlagen → rollt genau die Merges dieses Laufs
-  zurück, löst den Deploy neu aus, sperrt die Version für Auto-Merge und
-  meldet an das TW Business OS.
+  Funktionstest rot → rollt genau die Merges dieses Laufs zurück, löst den
+  Deploy neu aus und sperrt die Version für Auto-Merge. Deploy
+  fehlgeschlagen → Rollback ohne Sperre, nur wenn der Stand vorher grün
+  deployt war. Meldet immer an das TW Business OS.
 author: TW Projects
 
 inputs:
@@ -20,15 +21,23 @@ inputs:
     required: false
     default: none
   deploy-result:
-    description: wait-deploy-Output result (needs.<smoke-after-job>.outputs.deploy).
+    description: wait-deploy-Output result (needs.<deploy-job>.outputs.result).
     required: false
     default: ""
   deploy-detail:
     description: wait-deploy-Output detail, erscheint im Bericht.
     required: false
     default: ""
+  smoke-job:
+    description: Job-Ergebnis des Funktionstests nach dem Deploy (needs.<smoke-after-job>.result).
+    required: false
+    default: ""
   smoke-result:
-    description: Ergebnis des Funktionstests nach dem Deploy (needs.<smoke-after-job>.result).
+    description: >-
+      pass | fail aus dem Test-Schritt des Funktionstests nach dem Deploy
+      (needs.<smoke-after-job>.outputs.result; smoke-http setzt es selbst).
+      Nur "fail" löst einen Rollback aus. Fehlt es bei rotem Job (Einrichtung,
+      Installation, Download kaputt), wird nur gemeldet.
     required: false
     default: ""
   rollback:

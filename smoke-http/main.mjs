@@ -1,12 +1,18 @@
 // HTTP smoke test against production (ADR 0044): fails the job when a page
 // does not answer 2xx or lacks its expected text. The maintenance run reads
-// the job result (needs.<job>.result) as smoke-result.
+// the job result (needs.<job>.result) as smoke-result. Output `result`
+// (pass | fail) is set only once the checks actually ran: verify-deploy rolls
+// back on "fail" only, never on a broken setup (bad input, action download).
 import { appendFileSync } from "node:fs";
 import { parseChecks, runChecks } from "./lib/checks.mjs";
 
 function summary(line) {
   console.log(line);
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${line}\n`);
+}
+
+function output(name, value) {
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
 }
 
 function intInput(name, min, max) {
@@ -24,6 +30,7 @@ async function main() {
   });
   summary(`## Funktionstest (HTTP) — ${checks.length - failures.length}/${checks.length} ok`);
   for (const f of failures) summary(`- ${f}`);
+  output("result", failures.length > 0 ? "fail" : "pass");
   if (failures.length > 0) {
     console.error(`::error::${failures.join(" · ")}`);
     process.exit(1);

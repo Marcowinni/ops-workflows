@@ -9,7 +9,8 @@
 // never does, because such PRs are never merged by the run (plan.mjs).
 import { regressionLines } from "../../maintain/lib/regression.mjs";
 
-export function rollbackMessage(state, { reason, runUrl }) {
+/** lock = name the versions for the regression lock (only after a red smoke). */
+export function rollbackMessage(state, { reason, runUrl, lock }) {
   const prs = state.merges.map((m) => `#${m.number}`).join(", ");
   return [
     `Revert Wartung: ${prs} (${reason})`,
@@ -17,8 +18,7 @@ export function rollbackMessage(state, { reason, runUrl }) {
     `Automatisch zurückgerollt vom Wartungslauf (ADR 0044): Stand ${state.base.slice(0, 7)} vor dem Merge wiederhergestellt.`,
     ...state.merges.map((m) => `- #${m.number} ${m.title}`),
     `Lauf: ${runUrl}`,
-    "",
-    ...regressionLines(state.merges),
+    ...(lock ? ["", ...regressionLines(state.merges)] : []),
   ].join("\n");
 }
 
@@ -37,18 +37,22 @@ async function foreignChange(gh, state) {
 /**
  * Returns { done: false, reason } or { done: true, sha, lockError } —
  * lockError when the regression tag (regression.mjs) could not be set.
+ * tag = null: roll back without lock. API errors before the fast-forward
+ * throw (nothing changed); the caller reports them.
  */
 export async function rollBack(gh, state, { reason, runUrl, tag }) {
   const foreign = await foreignChange(gh, state);
   if (foreign) return { done: false, reason: foreign };
 
   const { tree } = await gh.gitCommit(state.base);
-  const sha = await gh.createCommit({ message: rollbackMessage(state, { reason, runUrl }), tree, parents: [state.head] });
+  const message = rollbackMessage(state, { reason, runUrl, lock: Boolean(tag) });
+  const sha = await gh.createCommit({ message, tree, parents: [state.head] });
   try {
     await gh.fastForward(state.branch, sha);
   } catch (e) {
     return { done: false, reason: `Rollback-Commit nicht übernommen: ${e.message}`.slice(0, 200) };
   }
+  if (!tag) return { done: true, sha, lockError: null };
   try {
     await gh.createTag(tag, sha);
     return { done: true, sha, lockError: null };

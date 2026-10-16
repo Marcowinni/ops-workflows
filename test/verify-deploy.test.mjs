@@ -22,19 +22,36 @@ const state = {
 const runUrl = "https://github.com/o/r/actions/runs/7";
 const repoUrl = "https://github.com/o/r";
 
-test("decide: outcomes and rollback guards", () => {
-  const base = { deployResult: "success", smokeResult: "success", preSmokeResult: "success", rollback: true };
-  assert.deepEqual(decide(base), { outcome: "green", deployConfirmed: true, rollback: false, blocker: null });
-  assert.deepEqual(decide({ ...base, smokeResult: "failure" }), { outcome: "red", deployConfirmed: true, rollback: true, blocker: null });
-  assert.deepEqual(decide({ ...base, deployResult: "failure", smokeResult: "skipped" }),
-    { outcome: "deploy_failed", deployConfirmed: false, rollback: true, blocker: null });
-  assert.equal(decide({ ...base, deployResult: "timeout", smokeResult: "skipped" }).outcome, "unconfirmed");
-  assert.equal(decide({ ...base, deployResult: "", smokeResult: "skipped" }).outcome, "unconfirmed");
-  assert.deepEqual([decide({ ...base, smokeResult: "cancelled" }).outcome, decide({ ...base, smokeResult: "cancelled" }).rollback], ["unconfirmed", false]);
-  assert.equal(decide({ ...base, smokeResult: "skipped" }).outcome, "untested");
-  assert.deepEqual(decide({ ...base, smokeResult: "failure", preSmokeResult: "failure" }),
-    { outcome: "red", deployConfirmed: true, rollback: false, blocker: "Produktion war vor dem Merge nicht nachweislich grün" });
-  assert.equal(decide({ ...base, smokeResult: "failure", rollback: false }).blocker, "Rollback abgeschaltet");
+const live = { deployResult: "success", smokeJob: "success", smokeResult: "pass", preSmokeResult: "success", rollback: true };
+const red = { ...live, smokeJob: "failure", smokeResult: "fail" };
+
+test("decide: green, red (rollback + lock), skipped smoke = untested", () => {
+  assert.deepEqual(decide(live), { outcome: "green", deployConfirmed: true, rollback: false, lock: false, blocker: null });
+  assert.deepEqual(decide(red), { outcome: "red", deployConfirmed: true, rollback: true, lock: true, blocker: null });
+  assert.equal(decide({ ...live, smokeJob: "skipped", smokeResult: "" }).outcome, "untested");
+  assert.deepEqual(decide({ ...red, preSmokeResult: "failure" }),
+    { outcome: "red", deployConfirmed: true, rollback: false, lock: true, blocker: "Produktion war vor dem Merge nicht nachweislich grün" });
+  assert.equal(decide({ ...red, rollback: false }).blocker, "Rollback abgeschaltet");
+});
+
+test("decide: a broken setup is never red — no rollback without a test that ran and failed", () => {
+  // install / action download failed: job red, no step result
+  assert.deepEqual(decide({ ...live, smokeJob: "failure", smokeResult: "" }),
+    { outcome: "unconfirmed", deployConfirmed: true, rollback: false, lock: false, blocker: null });
+  // HTTP step passed, command step never ran (install failed afterwards)
+  assert.equal(decide({ ...live, smokeJob: "failure", smokeResult: "pass" }).outcome, "unconfirmed");
+  assert.equal(decide({ ...live, smokeJob: "cancelled", smokeResult: "" }).outcome, "unconfirmed");
+  assert.equal(decide({ ...live, deployResult: "timeout", smokeJob: "skipped", smokeResult: "" }).outcome, "unconfirmed");
+  assert.equal(decide({ ...live, deployResult: "error", smokeJob: "skipped", smokeResult: "" }).outcome, "unconfirmed");
+});
+
+test("decide: failed deploy rolls back without lock, only when the commit before deployed green", () => {
+  const failed = { ...live, deployResult: "failure", smokeJob: "skipped", smokeResult: "" };
+  assert.deepEqual(decide({ ...failed, baseDeployGreen: true }),
+    { outcome: "deploy_failed", deployConfirmed: false, rollback: true, lock: false, blocker: null });
+  assert.equal(decide({ ...failed, baseDeployGreen: false }).blocker, "Deploy vor dem Merge war schon nicht grün");
+  assert.equal(decide(failed).blocker, "Deploy vor dem Merge unbekannt");
+  assert.equal(decide({ ...failed, baseDeployGreen: true, preSmokeResult: "failure" }).rollback, true, "prod health is not the question here");
 });
 
 test("parseMergeState: empty = nothing merged, strict shape", () => {
@@ -98,6 +115,18 @@ test("rollBack: never touches foreign commits", async () => {
   assert.equal(belowBase.calls.commits.length, 0);
 });
 
+test("rollBack without tag: no lock lines, no tag", async () => {
+  const gh = fakeGitHub();
+  assert.deepEqual(await rollBack(gh, state, { ...rollbackOpts, reason: "Deploy fehlgeschlagen", tag: null }), { done: true, sha: sha("r"), lockError: null });
+  assert.doesNotMatch(gh.calls.commits[0].message, /ops-regression/);
+  assert.deepEqual(gh.calls.tags, []);
+});
+
+test("rollBack: API error before the fast-forward throws, nothing changed", async () => {
+  const gh = { ...fakeGitHub(), createCommit: async () => { throw new Error("POST /git/commits → 502"); } };
+  await assert.rejects(rollBack(gh, state, rollbackOpts), /502/);
+});
+
 test("rollBack: branch moved during the rollback, tag fails after it", async () => {
   const raced = await rollBack(fakeGitHub({ fastForwardError: "Update is not a fast forward" }), state, rollbackOpts);
   assert.deepEqual(raced, { done: false, reason: "Rollback-Commit nicht übernommen: Update is not a fast forward" });
@@ -105,45 +134,50 @@ test("rollBack: branch moved during the rollback, tag fails after it", async () 
   assert.deepEqual(unlocked, { done: true, sha: sha("r"), lockError: "Reference already exists" });
 });
 
-test("buildVerifyReport: green, unconfirmed, red with rollback, failed deploy without rollback", () => {
-  const green = buildVerifyReport({ state, decision: decide({ deployResult: "success", smokeResult: "success", preSmokeResult: "success", rollback: true }), runUrl, repoUrl });
+test("buildVerifyReport: green, unconfirmed, untested", () => {
+  const green = buildVerifyReport({ state, decision: decide(live), runUrl, repoUrl });
   assert.deepEqual(green.checks.map((c) => [c.kind, c.status, c.detail]), [["smoke_test", "ok", "grün nach Update: #12, #14"]]);
   assert.deepEqual(green.events, [{ kind: "smoke_test", summary: "Funktionstest nach Deploy grün: #12, #14", url: runUrl }]);
 
-  const late = buildVerifyReport({ state, decision: decide({ deployResult: "timeout", smokeResult: "skipped" }), deployDetail: "kein fertiger Produktions-Deploy", runUrl, repoUrl });
+  const late = buildVerifyReport({ state, decision: decide({ ...live, deployResult: "timeout", smokeJob: "skipped", smokeResult: "" }), deployDetail: "kein fertiger Produktions-Deploy", runUrl, repoUrl });
   assert.deepEqual([late.checks[0].status, late.checks[0].detail, late.events], ["warn", "Deploy nicht bestätigt (kein fertiger Produktions-Deploy): #12, #14", []]);
-  const cancelled = buildVerifyReport({ state, decision: decide({ deployResult: "success", smokeResult: "cancelled" }), runUrl, repoUrl });
-  assert.equal(cancelled.checks[0].detail, "Funktionstest nach Deploy abgebrochen: #12, #14");
-  const untested = buildVerifyReport({ state, decision: decide({ deployResult: "success", smokeResult: "skipped" }), runUrl, repoUrl });
+  const setup = buildVerifyReport({ state, decision: decide({ ...live, smokeJob: "failure", smokeResult: "" }), runUrl, repoUrl });
+  assert.deepEqual([setup.checks[0].status, setup.checks[0].detail], ["warn", "Funktionstest nach Deploy nicht gelaufen (Einrichtung kaputt oder abgebrochen): #12, #14"]);
+  const untested = buildVerifyReport({ state, decision: decide({ ...live, smokeJob: "skipped", smokeResult: "" }), runUrl, repoUrl });
   assert.deepEqual(untested, {
     checks: [],
     events: [{ kind: "deps_update", summary: "Deploy live nach Update: #12, #14 (kein Funktionstest nach Deploy)", url: runUrl }],
   });
+  assert.ok([...green.checks, ...late.checks, ...setup.checks].every((c) => c.detail.length <= 500 && c.expected_every_hours === 30));
+});
 
-  const red = buildVerifyReport({
+test("buildVerifyReport: red with rollback, failed deploy with and without rollback", () => {
+  const rolled = buildVerifyReport({
     state,
-    decision: decide({ deployResult: "success", smokeResult: "failure", preSmokeResult: "success", rollback: true }),
+    decision: decide(red),
     rollback: { done: true, sha: sha("r"), lockError: null },
     rollbackDeploy: { result: "success", detail: "Produktion live: Production" },
     runUrl, repoUrl,
   });
-  const [check] = red.checks;
+  const [check] = rolled.checks;
   assert.deepEqual([check.kind, check.status, check.url], ["smoke_test", "fail", `${repoUrl}/commit/${sha("r")}`]);
   assert.match(check.detail, /^Funktionstest rot nach Update: #12 chore\(deps\): bump a from 1\.0\.0 to 1\.1\.0, #14 .* · automatisch zurückgerollt \(rrrrrrr\), Rollback live$/);
-  assert.equal(red.events[0].kind, "smoke_test");
+  assert.equal(rolled.events[0].kind, "smoke_test");
 
-  const broken = buildVerifyReport({
-    state,
-    decision: decide({ deployResult: "failure", smokeResult: "failure", preSmokeResult: "none", rollback: true }),
-    runUrl, repoUrl,
+  const failed = { ...live, deployResult: "failure", smokeJob: "skipped", smokeResult: "" };
+  const kept = buildVerifyReport({ state, decision: decide({ ...failed, baseDeployGreen: false }), runUrl, repoUrl });
+  assert.deepEqual([kept.checks[0].kind, kept.checks[0].status, kept.checks[0].url], ["deps_update", "fail", runUrl]);
+  assert.match(kept.checks[0].detail, /^Deploy fehlgeschlagen nach Update \(Produktion lief weiter auf dem alten Stand\): .* · kein Rollback: Deploy vor dem Merge war schon nicht grün — bitte prüfen$/);
+  const reverted = buildVerifyReport({
+    state, decision: decide({ ...failed, baseDeployGreen: true }), runUrl, repoUrl,
+    rollback: { done: true, sha: sha("r"), lockError: null },
+    rollbackDeploy: { result: "success", detail: "…" },
   });
-  assert.deepEqual([broken.checks[0].kind, broken.checks[0].status, broken.checks[0].url], ["deps_update", "fail", runUrl]);
-  assert.match(broken.checks[0].detail, /kein Rollback: Produktion war vor dem Merge nicht nachweislich grün — bitte prüfen$/);
-  assert.ok([...green.checks, ...red.checks, ...broken.checks].every((c) => c.detail.length <= 500 && c.expected_every_hours === 30));
+  assert.match(reverted.checks[0].detail, /automatisch zurückgerollt \(rrrrrrr\), Rollback live, ohne Regressions-Sperre \(Deploy-Fehler kann vorübergehend sein\)$/);
 });
 
-test("buildVerifyReport: rollback problems are spelled out", () => {
-  const decision = decide({ deployResult: "success", smokeResult: "failure", preSmokeResult: "success", rollback: true });
+test("buildVerifyReport: rollback problems and API errors are spelled out", () => {
+  const decision = decide(red);
   const notDone = buildVerifyReport({ state, decision, rollback: { done: false, reason: "main hat sich seit dem Merge bewegt" }, runUrl, repoUrl });
   assert.match(notDone.checks[0].detail, /kein Rollback: main hat sich seit dem Merge bewegt — bitte prüfen$/);
   const shaky = buildVerifyReport({
@@ -152,4 +186,10 @@ test("buildVerifyReport: rollback problems are spelled out", () => {
     rollbackDeploy: { result: "timeout", detail: "…" },
   });
   assert.match(shaky.checks[0].detail, /Rollback-Deploy nicht bestätigt — bitte prüfen, Deploy-Hook fehlgeschlagen \(1\), Regressions-Sperre fehlt \(Tag nicht gesetzt\)$/);
+  const before = buildVerifyReport({ state, decision, error: "POST /git/commits → 502", runUrl, repoUrl });
+  assert.deepEqual([before.checks[0].status, before.checks[0].url], ["fail", runUrl]);
+  assert.match(before.checks[0].detail, /kein Rollback: Fehler \(POST \/git\/commits → 502\) — bitte prüfen$/);
+  const after = buildVerifyReport({ state, decision, error: "GET /deployments → 500", rollback: { done: true, sha: sha("r"), lockError: null }, runUrl, repoUrl });
+  assert.match(after.checks[0].detail, /automatisch zurückgerollt \(rrrrrrr\), Rollback-Deploy nicht geprüft \(Fehler: GET \/deployments → 500\) — bitte prüfen$/);
+  assert.equal(after.checks[0].url, `${repoUrl}/commit/${sha("r")}`);
 });

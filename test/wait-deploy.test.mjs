@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { evaluateDeployments, isProduction, waitForDeploy } from "../wait-deploy/lib/deployments.mjs";
+import { deployStateOnce, evaluateDeployments, isProduction, waitForDeploy } from "../wait-deploy/lib/deployments.mjs";
 
 const SHA = "a".repeat(40);
 
@@ -65,6 +65,14 @@ test("waitForDeploy: a hook deploy after a blocked git deploy turns it green", a
     [45_000, [{ id: 1, environment: "Production", state: "failure" }, { id: 2, environment: "Production", state: "success" }]],
   ]);
   assert.equal((await waitForDeploy(gh, SHA, opts, clock)).result, "success");
+});
+
+test("deployStateOnce: one look at a commit's production deploys", async () => {
+  const clock = fakeClock();
+  const gh = fakeGitHub(clock, [[0, [{ id: 1, environment: "Production", state: "success" }, { id: 2, environment: "Preview", state: "error" }]]]);
+  assert.equal((await deployStateOnce(gh, SHA)).state, "success");
+  assert.equal((await deployStateOnce(gh, SHA, { minDeployments: 2 })).state, "pending");
+  assert.equal(clock.now(), 0, "no waiting");
 });
 
 test("waitForDeploy: failure and timeout", async () => {

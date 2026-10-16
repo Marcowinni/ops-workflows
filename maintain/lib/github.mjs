@@ -15,7 +15,7 @@ export function createGitHub({ token, repo, apiUrl = "https://api.github.com" })
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;
     if (!res.ok) {
-      const err = new Error(`${method} ${path} → ${res.status}: ${data?.message ?? text}`);
+      const err = new Error(`${method} ${path || "/"} → ${res.status}: ${data?.message ?? text}`);
       err.status = res.status;
       throw err;
     }
