@@ -44,9 +44,9 @@ concurrency:
 jobs:
   ci:
     uses: Marcowinni/ops-workflows/.github/workflows/ci.yml@v1
-    with:
-      level: web_app   # website | web_app | integrated_app (solution_type im Steckbrief)
 ```
+
+Die Stufe kommt aus `solution_type` im Steckbrief (`AGENTS.md`). Nur wo es keinen Steckbrief gibt: `with: { level: web_app }`. Andere Typen (`ai_*`, `platform`) oder `offen` laufen mit Mindeststufe `website` und erscheinen im Summary als Lücke.
 
 | Stufe | Schritte |
 |---|---|
