@@ -9,6 +9,8 @@ Vier Actions, je ein Ordner mit `action.yml` + `main.mjs` (Einstieg) + `lib/` (r
 | `wait-deploy/` | wartet auf den Produktions-Deploy eines Commits (GitHub-Deployments von Vercel/Railway) | deployments read |
 | `verify-deploy/` | wertet den Test nach dem Deploy aus, rollt bei Rot zurück, meldet | contents write, deployments read |
 
+Dazu ein wiederverwendbarer Workflow `.github/workflows/ci.yml` (zentrale CI für Pull Requests, Stufen `website` / `web_app` / `integrated_app`); er braucht keine eigene Logik in `lib/`.
+
 Gemeinsam genutzt (liegt in `maintain/lib/`, weil `maintain` der Kern ist): `github.mjs` (REST-Client), `os-report.mjs` (Bericht an `solution_report`), `deploy-hooks.mjs`, `regression.mjs` (Regressions-Sperre). `verify-deploy` nutzt ausserdem `wait-deploy/lib/deployments.mjs` für den Deploy des Rollbacks.
 
 ## Datenfluss
