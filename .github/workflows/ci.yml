@@ -7,7 +7,10 @@
 #   web_app         + lint, typecheck (falls Skript vorhanden)
 #   integrated_app  + test (falls Skript vorhanden)
 # Fehlt ein Skript in package.json, wird der Schritt übersprungen und im
-# Job-Summary als Lücke vermerkt; ein fehlender Build bricht ab.
+# Job-Summary als Lücke vermerkt. Ein fehlender Build bricht ab — ausser auf
+# Stufe website: Statische Sites haben oft keinen Build (und manchmal kein
+# package.json); dort prüft `node --check` stattdessen alle JS-Dateien, damit
+# ein Syntaxfehler in api/ oder Skripten nicht erst in Produktion auffällt.
 # Job-Namen bleiben stabil («checks», «secret-scan»): Die Wartung nennt sie in
 # `required-checks`, z.B. "ci / checks, ci / secret-scan".
 
@@ -49,11 +52,13 @@ jobs:
       - name: Paketmanager erkennen
         id: pm
         run: |
+          has() { node -p "Boolean(require('./package.json').scripts?.['$1'])"; }
           if [ -f pnpm-lock.yaml ]; then echo "name=pnpm" >> "$GITHUB_OUTPUT"
           elif [ -f package-lock.json ]; then echo "name=npm" >> "$GITHUB_OUTPUT"
+          elif [ ! -f package.json ] && [ "${{ inputs.level }}" = "website" ]; then
+            echo "name=none" >> "$GITHUB_OUTPUT"; exit 0
           else echo "::error::Kein Lockfile (pnpm-lock.yaml / package-lock.json) in ${{ inputs.working-directory }}"; exit 1
           fi
-          has() { node -p "Boolean(require('./package.json').scripts?.['$1'])"; }
           echo "has_lint=$(has lint)" >> "$GITHUB_OUTPUT"
           echo "has_typecheck=$(has typecheck)" >> "$GITHUB_OUTPUT"
           echo "has_test=$(has test)" >> "$GITHUB_OUTPUT"
@@ -69,10 +74,11 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}
-          cache: ${{ steps.pm.outputs.name }}
-          cache-dependency-path: ${{ inputs.working-directory }}/${{ steps.pm.outputs.name == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json' }}
+          cache: ${{ steps.pm.outputs.name != 'none' && steps.pm.outputs.name || '' }}
+          cache-dependency-path: ${{ steps.pm.outputs.name != 'none' && format('{0}/{1}', inputs.working-directory, steps.pm.outputs.name == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json') || '' }}
 
       - name: Install
+        if: steps.pm.outputs.name != 'none'
         run: ${{ steps.pm.outputs.name == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm ci' }}
 
       - name: Lint
@@ -88,17 +94,26 @@ jobs:
         run: ${{ steps.pm.outputs.name }} run test
 
       - name: Build
+        if: steps.pm.outputs.has_build == 'true'
+        run: ${{ steps.pm.outputs.name }} run ${{ inputs.build-script }}
+
+      - name: Ohne Build (nur Stufe website)
+        if: steps.pm.outputs.has_build != 'true'
         run: |
-          if [ "${{ steps.pm.outputs.has_build }}" != "true" ]; then
+          if [ "${{ inputs.level }}" != "website" ]; then
             echo "::error::Skript '${{ inputs.build-script }}' fehlt in package.json"; exit 1
           fi
-          ${{ steps.pm.outputs.name }} run ${{ inputs.build-script }}
+          files=$(find . -path ./node_modules -prune -o \( -name '*.js' -o -name '*.mjs' \) -print)
+          for f in $files; do node --check "$f" || { echo "::error file=$f::Syntaxfehler"; exit 1; }; done
+          echo "node --check: $(echo "$files" | grep -c . || true) JS-Dateien ok"
 
       - name: Lücken im Summary
         if: always()
         run: |
           {
             echo "### CI (zentral) · Stufe \`${{ inputs.level }}\`"
+            [ "${{ steps.pm.outputs.name }}" = "none" ] && echo "- Kein package.json: nur Syntax-Check"
+            [ "${{ inputs.level }}" = "website" ] && [ "${{ steps.pm.outputs.name }}" != "none" ] && [ "${{ steps.pm.outputs.has_build }}" != "true" ] && echo "- Kein Build-Skript: nur Syntax-Check"
             [ "${{ inputs.level }}" != "website" ] && [ "${{ steps.pm.outputs.has_lint }}" != "true" ] && echo "- Lücke: kein \`lint\`-Skript"
             [ "${{ inputs.level }}" != "website" ] && [ "${{ steps.pm.outputs.has_typecheck }}" != "true" ] && echo "- Lücke: kein \`typecheck\`-Skript"
             [ "${{ inputs.level }}" = "integrated_app" ] && [ "${{ steps.pm.outputs.has_test }}" != "true" ] && echo "- Lücke: kein \`test\`-Skript"

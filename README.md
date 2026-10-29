@@ -55,7 +55,7 @@ jobs:
 | `integrated_app` | + test |
 
 - Paketmanager wird am Lockfile erkannt (pnpm oder npm), mit Cache.
-- Fehlt `lint`, `typecheck` oder `test` in `package.json`, wird der Schritt übersprungen und im Summary als Lücke vermerkt. Ein fehlendes Build-Skript bricht ab.
+- Fehlt `lint`, `typecheck` oder `test` in `package.json`, wird der Schritt übersprungen und im Summary als Lücke vermerkt. Ein fehlendes Build-Skript bricht ab, ausser auf Stufe `website`: Dort (auch ohne `package.json`) läuft stattdessen `node --check` über alle JS-Dateien.
 - Weitere Eingaben: `working-directory` (Standard `.`), `node-version` (Standard `24`), `build-script` (Standard `build`).
 - Für die Wartung: `required-checks: "ci / checks, ci / secret-scan"`.
 - Dependabot-PRs merged der Wartungslauf nach seinen Regeln. Eigene `dependabot-auto-merge.yml` im Repo entfernen, sobald es eingebunden ist.
