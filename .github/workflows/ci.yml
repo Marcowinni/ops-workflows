@@ -2,7 +2,8 @@
 # Jedes Repo ruft sie mit einer kleinen ci.yml auf, siehe README «CI einbinden».
 # Eine Verbesserung hier gilt für alle Repos auf @v1.
 #
-# Stufen (`level`, = solution_type im Steckbrief):
+# Stufen (`level`; leer = `solution_type` aus dem Steckbrief in AGENTS.md, so
+# wird die Stufe nur an einem Ort gepflegt):
 #   website         install, build, Secret-Scan
 #   web_app         + lint, typecheck (falls Skript vorhanden)
 #   integrated_app  + test (falls Skript vorhanden)
@@ -20,9 +21,9 @@ on:
   workflow_call:
     inputs:
       level:
-        description: website | web_app | integrated_app
+        description: website | web_app | integrated_app (leer = aus AGENTS.md)
         type: string
-        default: web_app
+        default: ""
       working-directory:
         description: Ordner mit package.json
         type: string
@@ -49,13 +50,32 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Other solution types (ai_*, platform) or `offen` fall back to the
+      # minimum level website and show up as a gap; never guess a stricter one.
+      - name: Stufe bestimmen
+        id: level
+        working-directory: .
+        run: |
+          level="${{ inputs.level }}"
+          source=input
+          if [ -z "$level" ]; then
+            source=AGENTS.md
+            level=$(sed -n 's/^solution_type:[[:space:]]*\([a-z_]*\).*/\1/p' AGENTS.md 2>/dev/null | head -1)
+          fi
+          case "$level" in
+            website|web_app|integrated_app) ;;
+            *) echo "unknown=${level:-fehlt}" >> "$GITHUB_OUTPUT"; level=website ;;
+          esac
+          echo "value=$level" >> "$GITHUB_OUTPUT"
+          echo "Stufe $level (aus $source)"
+
       - name: Paketmanager erkennen
         id: pm
         run: |
           has() { node -p "Boolean(require('./package.json').scripts?.['$1'])"; }
           if [ -f pnpm-lock.yaml ]; then echo "name=pnpm" >> "$GITHUB_OUTPUT"
           elif [ -f package-lock.json ]; then echo "name=npm" >> "$GITHUB_OUTPUT"
-          elif [ ! -f package.json ] && [ "${{ inputs.level }}" = "website" ]; then
+          elif [ ! -f package.json ] && [ "${{ steps.level.outputs.value }}" = "website" ]; then
             echo "name=none" >> "$GITHUB_OUTPUT"; exit 0
           else echo "::error::Kein Lockfile (pnpm-lock.yaml / package-lock.json) in ${{ inputs.working-directory }}"; exit 1
           fi
@@ -82,15 +102,15 @@ jobs:
         run: ${{ steps.pm.outputs.name == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm ci' }}
 
       - name: Lint
-        if: inputs.level != 'website' && steps.pm.outputs.has_lint == 'true'
+        if: steps.level.outputs.value != 'website' && steps.pm.outputs.has_lint == 'true'
         run: ${{ steps.pm.outputs.name }} run lint
 
       - name: Typecheck
-        if: inputs.level != 'website' && steps.pm.outputs.has_typecheck == 'true'
+        if: steps.level.outputs.value != 'website' && steps.pm.outputs.has_typecheck == 'true'
         run: ${{ steps.pm.outputs.name }} run typecheck
 
       - name: Test
-        if: inputs.level == 'integrated_app' && steps.pm.outputs.has_test == 'true'
+        if: steps.level.outputs.value == 'integrated_app' && steps.pm.outputs.has_test == 'true'
         run: ${{ steps.pm.outputs.name }} run test
 
       - name: Build
@@ -100,7 +120,7 @@ jobs:
       - name: Ohne Build (nur Stufe website)
         if: steps.pm.outputs.has_build != 'true'
         run: |
-          if [ "${{ inputs.level }}" != "website" ]; then
+          if [ "${{ steps.level.outputs.value }}" != "website" ]; then
             echo "::error::Skript '${{ inputs.build-script }}' fehlt in package.json"; exit 1
           fi
           files=$(find . -path ./node_modules -prune -o \( -name '*.js' -o -name '*.mjs' \) -print)
@@ -111,12 +131,13 @@ jobs:
         if: always()
         run: |
           {
-            echo "### CI (zentral) · Stufe \`${{ inputs.level }}\`"
+            echo "### CI (zentral) · Stufe \`${{ steps.level.outputs.value }}\`"
+            [ -n "${{ steps.level.outputs.unknown }}" ] && echo "- Lücke: solution_type \`${{ steps.level.outputs.unknown }}\` → Mindeststufe website. In AGENTS.md setzen oder \`level\` übergeben."
             [ "${{ steps.pm.outputs.name }}" = "none" ] && echo "- Kein package.json: nur Syntax-Check"
-            [ "${{ inputs.level }}" = "website" ] && [ "${{ steps.pm.outputs.name }}" != "none" ] && [ "${{ steps.pm.outputs.has_build }}" != "true" ] && echo "- Kein Build-Skript: nur Syntax-Check"
-            [ "${{ inputs.level }}" != "website" ] && [ "${{ steps.pm.outputs.has_lint }}" != "true" ] && echo "- Lücke: kein \`lint\`-Skript"
-            [ "${{ inputs.level }}" != "website" ] && [ "${{ steps.pm.outputs.has_typecheck }}" != "true" ] && echo "- Lücke: kein \`typecheck\`-Skript"
-            [ "${{ inputs.level }}" = "integrated_app" ] && [ "${{ steps.pm.outputs.has_test }}" != "true" ] && echo "- Lücke: kein \`test\`-Skript"
+            [ "${{ steps.level.outputs.value }}" = "website" ] && [ "${{ steps.pm.outputs.name }}" != "none" ] && [ "${{ steps.pm.outputs.has_build }}" != "true" ] && echo "- Kein Build-Skript: nur Syntax-Check"
+            [ "${{ steps.level.outputs.value }}" != "website" ] && [ "${{ steps.pm.outputs.has_lint }}" != "true" ] && echo "- Lücke: kein \`lint\`-Skript"
+            [ "${{ steps.level.outputs.value }}" != "website" ] && [ "${{ steps.pm.outputs.has_typecheck }}" != "true" ] && echo "- Lücke: kein \`typecheck\`-Skript"
+            [ "${{ steps.level.outputs.value }}" = "integrated_app" ] && [ "${{ steps.pm.outputs.has_test }}" != "true" ] && echo "- Lücke: kein \`test\`-Skript"
             true
           } >> "$GITHUB_STEP_SUMMARY"
 
