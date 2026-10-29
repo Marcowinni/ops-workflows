@@ -25,6 +25,41 @@ Das Repo ist öffentlich, damit es auch von öffentlichen Repos und nach einer �
    Bleibt der Bericht länger als 30 h aus, meldet das OS den Lauf als verstummt.
 6. **Test nach dem Deploy** (empfohlen, eigene Jobs): Der Lauf wartet auf den Produktions-Deploy des Merges, prüft mit demselben Funktionstest erneut und rollt bei Rot automatisch zurück. Siehe [Test nach dem Deploy](#test-nach-dem-deploy-mit-auto-rollback).
 
+## CI einbinden
+
+Zentrale CI für jeden Pull Request, als wiederverwendbarer Workflow (`.github/workflows/ci.yml`). Im Repo genügt diese Datei:
+
+```yaml
+# .github/workflows/ci.yml
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ci:
+    uses: Marcowinni/ops-workflows/.github/workflows/ci.yml@v1
+    with:
+      level: web_app   # website | web_app | integrated_app (solution_type im Steckbrief)
+```
+
+| Stufe | Schritte |
+|---|---|
+| `website` | install, build, Secret-Scan |
+| `web_app` | + lint, typecheck |
+| `integrated_app` | + test |
+
+- Paketmanager wird am Lockfile erkannt (pnpm oder npm), mit Cache.
+- Fehlt `lint`, `typecheck` oder `test` in `package.json`, wird der Schritt übersprungen und im Summary als Lücke vermerkt. Ein fehlendes Build-Skript bricht ab, ausser auf Stufe `website`: Dort (auch ohne `package.json`) läuft stattdessen `node --check` über alle JS-Dateien.
+- Weitere Eingaben: `working-directory` (Standard `.`), `node-version` (Standard `24`), `build-script` (Standard `build`).
+- Für die Wartung: `required-checks: "ci / checks, ci / secret-scan"`.
+- Dependabot-PRs merged der Wartungslauf nach seinen Regeln. Eigene `dependabot-auto-merge.yml` im Repo entfernen, sobald es eingebunden ist.
+
 ## Takt in Wellen
 
 Geprüft wird täglich, Updates kommen in Wellen (ADR 0044 §4). Der Lauf fragt jeden Tag zuerst das Business OS ab («Abgleich»). Die Welle steht im Register, nicht im Repo.

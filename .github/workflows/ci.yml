@@ -1,0 +1,135 @@
+# Zentrale CI für Lösungen von TW Projects (ADR 0044, TWP-17 M1b).
+# Jedes Repo ruft sie mit einer kleinen ci.yml auf, siehe README «CI einbinden».
+# Eine Verbesserung hier gilt für alle Repos auf @v1.
+#
+# Stufen (`level`, = solution_type im Steckbrief):
+#   website         install, build, Secret-Scan
+#   web_app         + lint, typecheck (falls Skript vorhanden)
+#   integrated_app  + test (falls Skript vorhanden)
+# Fehlt ein Skript in package.json, wird der Schritt übersprungen und im
+# Job-Summary als Lücke vermerkt. Ein fehlender Build bricht ab — ausser auf
+# Stufe website: Statische Sites haben oft keinen Build (und manchmal kein
+# package.json); dort prüft `node --check` stattdessen alle JS-Dateien, damit
+# ein Syntaxfehler in api/ oder Skripten nicht erst in Produktion auffällt.
+# Job-Namen bleiben stabil («checks», «secret-scan»): Die Wartung nennt sie in
+# `required-checks`, z.B. "ci / checks, ci / secret-scan".
+
+name: CI (zentral)
+
+on:
+  workflow_call:
+    inputs:
+      level:
+        description: website | web_app | integrated_app
+        type: string
+        default: web_app
+      working-directory:
+        description: Ordner mit package.json
+        type: string
+        default: "."
+      node-version:
+        type: string
+        default: "24"
+      build-script:
+        description: Name des Build-Skripts in package.json
+        type: string
+        default: build
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Paketmanager erkennen
+        id: pm
+        run: |
+          has() { node -p "Boolean(require('./package.json').scripts?.['$1'])"; }
+          if [ -f pnpm-lock.yaml ]; then echo "name=pnpm" >> "$GITHUB_OUTPUT"
+          elif [ -f package-lock.json ]; then echo "name=npm" >> "$GITHUB_OUTPUT"
+          elif [ ! -f package.json ] && [ "${{ inputs.level }}" = "website" ]; then
+            echo "name=none" >> "$GITHUB_OUTPUT"; exit 0
+          else echo "::error::Kein Lockfile (pnpm-lock.yaml / package-lock.json) in ${{ inputs.working-directory }}"; exit 1
+          fi
+          echo "has_lint=$(has lint)" >> "$GITHUB_OUTPUT"
+          echo "has_typecheck=$(has typecheck)" >> "$GITHUB_OUTPUT"
+          echo "has_test=$(has test)" >> "$GITHUB_OUTPUT"
+          echo "has_build=$(has '${{ inputs.build-script }}')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        if: steps.pm.outputs.name == 'pnpm'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ steps.pm.outputs.name != 'none' && steps.pm.outputs.name || '' }}
+          cache-dependency-path: ${{ steps.pm.outputs.name != 'none' && format('{0}/{1}', inputs.working-directory, steps.pm.outputs.name == 'pnpm' && 'pnpm-lock.yaml' || 'package-lock.json') || '' }}
+
+      - name: Install
+        if: steps.pm.outputs.name != 'none'
+        run: ${{ steps.pm.outputs.name == 'pnpm' && 'pnpm install --frozen-lockfile' || 'npm ci' }}
+
+      - name: Lint
+        if: inputs.level != 'website' && steps.pm.outputs.has_lint == 'true'
+        run: ${{ steps.pm.outputs.name }} run lint
+
+      - name: Typecheck
+        if: inputs.level != 'website' && steps.pm.outputs.has_typecheck == 'true'
+        run: ${{ steps.pm.outputs.name }} run typecheck
+
+      - name: Test
+        if: inputs.level == 'integrated_app' && steps.pm.outputs.has_test == 'true'
+        run: ${{ steps.pm.outputs.name }} run test
+
+      - name: Build
+        if: steps.pm.outputs.has_build == 'true'
+        run: ${{ steps.pm.outputs.name }} run ${{ inputs.build-script }}
+
+      - name: Ohne Build (nur Stufe website)
+        if: steps.pm.outputs.has_build != 'true'
+        run: |
+          if [ "${{ inputs.level }}" != "website" ]; then
+            echo "::error::Skript '${{ inputs.build-script }}' fehlt in package.json"; exit 1
+          fi
+          files=$(find . -path ./node_modules -prune -o \( -name '*.js' -o -name '*.mjs' \) -print)
+          for f in $files; do node --check "$f" || { echo "::error file=$f::Syntaxfehler"; exit 1; }; done
+          echo "node --check: $(echo "$files" | grep -c . || true) JS-Dateien ok"
+
+      - name: Lücken im Summary
+        if: always()
+        run: |
+          {
+            echo "### CI (zentral) · Stufe \`${{ inputs.level }}\`"
+            [ "${{ steps.pm.outputs.name }}" = "none" ] && echo "- Kein package.json: nur Syntax-Check"
+            [ "${{ inputs.level }}" = "website" ] && [ "${{ steps.pm.outputs.name }}" != "none" ] && [ "${{ steps.pm.outputs.has_build }}" != "true" ] && echo "- Kein Build-Skript: nur Syntax-Check"
+            [ "${{ inputs.level }}" != "website" ] && [ "${{ steps.pm.outputs.has_lint }}" != "true" ] && echo "- Lücke: kein \`lint\`-Skript"
+            [ "${{ inputs.level }}" != "website" ] && [ "${{ steps.pm.outputs.has_typecheck }}" != "true" ] && echo "- Lücke: kein \`typecheck\`-Skript"
+            [ "${{ inputs.level }}" = "integrated_app" ] && [ "${{ steps.pm.outputs.has_test }}" != "true" ] && echo "- Lücke: kein \`test\`-Skript"
+            true
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: gitleaks
+        run: |
+          VERSION=8.21.2   # same pin as the Business OS PR gate
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          # --no-git: scan the working tree of this commit (history was scanned before)
+          gitleaks detect --no-git --source . --redact --no-banner
