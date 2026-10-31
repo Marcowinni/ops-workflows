@@ -25,6 +25,18 @@ Das Repo ist öffentlich, damit es auch von öffentlichen Repos und nach einer �
    Bleibt der Bericht länger als 30 h aus, meldet das OS den Lauf als verstummt.
 6. **Test nach dem Deploy** (empfohlen, eigene Jobs): Der Lauf wartet auf den Produktions-Deploy des Merges, prüft mit demselben Funktionstest erneut und rollt bei Rot automatisch zurück. Siehe [Test nach dem Deploy](#test-nach-dem-deploy-mit-auto-rollback).
 
+## Repo-Profil
+
+Der Wartungslauf schickt mit jedem Bericht ein Repo-Profil an das Business OS (`maintain/lib/profile.mjs`). Die Detailseite `/ops/solutions/[id]` zeigt es ohne Handpflege. Das Profil enthält:
+
+- Steckbrief aus `AGENTS.md`
+- Workflows, darunter ob die zentrale CI eingebunden ist
+- Skripte und Node-Version aus `package.json`
+- ob `ARCHITECTURE.md` und `README.md` vorhanden sind
+- Check-Status des Hauptbranches
+
+Ist das Profil nicht lesbar, geht der Bericht ohne Profil raus.
+
 ## CI einbinden
 
 Zentrale CI für jeden Pull Request, als wiederverwendbarer Workflow (`.github/workflows/ci.yml`). Im Repo genügt diese Datei:
