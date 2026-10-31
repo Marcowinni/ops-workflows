@@ -83,6 +83,25 @@ export function createGitHub({ token, repo, apiUrl = "https://api.github.com" })
       const commits = refs.filter((r) => r.object?.type === "commit");
       return Promise.all(commits.map(async (r) => (await gitCommit(r.object.sha)).message));
     },
+    /** Entries of a directory on the default branch; [] if it does not exist. */
+    async listDir(path) {
+      try {
+        return (await request("GET", `/contents/${path}`)).map((e) => e.name);
+      } catch (e) {
+        if (e.status === 404) return [];
+        throw e;
+      }
+    },
+    /** Text of a file on the default branch; null if it does not exist. */
+    async fileText(path) {
+      try {
+        const file = await request("GET", `/contents/${path}`);
+        return Buffer.from(file.content, "base64").toString("utf8");
+      } catch (e) {
+        if (e.status === 404) return null;
+        throw e;
+      }
+    },
     async deployments(sha) {
       return request("GET", `/deployments?sha=${sha}&per_page=100`);
     },

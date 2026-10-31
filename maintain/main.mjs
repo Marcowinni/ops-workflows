@@ -2,7 +2,8 @@
 // Business OS (approvals + update wave), merge what the wave, the auto-merge
 // limit or a person allows, trigger deploys, report status + proof. Hands
 // the merges on (output merge-state) for the check after deploy
-// (wait-deploy + verify-deploy).
+// (wait-deploy + verify-deploy). The report also carries the repo profile
+// for the solution detail page (profile.mjs).
 import { appendFileSync } from "node:fs";
 import { evaluateChecks } from "./lib/checks.mjs";
 import { classifyUpdate } from "./lib/classify.mjs";
@@ -10,6 +11,7 @@ import { parseHooks, triggerDeployHooks } from "./lib/deploy-hooks.mjs";
 import { createGitHub } from "./lib/github.mjs";
 import { createReporter } from "./lib/os-report.mjs";
 import { autoMergeGate, planMerges, withApproved } from "./lib/plan.mjs";
+import { buildProfile, headState } from "./lib/profile.mjs";
 import { parseRegressions, regressionOf, updatesOf } from "./lib/regression.mjs";
 import { buildReport } from "./lib/report.mjs";
 import { applySchedule, isSecurityPr, pendingFor } from "./lib/schedule.mjs";
@@ -99,6 +101,38 @@ async function headAfterMerges(gh, before, merged) {
   }
 }
 
+/**
+ * Read after the merges, so it shows the state that is live now. A failure
+ * here only costs the profile, never the maintenance report.
+ */
+async function readProfile(gh) {
+  try {
+    const head = await gh.branchHead();
+    const [rootFiles, workflowNames, agentsMd, pkgText, checkRuns, statuses] = await Promise.all([
+      gh.listDir(""),
+      gh.listDir(".github/workflows"),
+      gh.fileText("AGENTS.md"),
+      gh.fileText("package.json"),
+      gh.checkRuns(head.sha),
+      gh.statuses(head.sha),
+    ]);
+    const yml = workflowNames.filter((n) => /\.ya?ml$/.test(n));
+    const workflows = await Promise.all(
+      yml.map(async (name) => ({ name, text: (await gh.fileText(`.github/workflows/${name}`)) ?? "" })),
+    );
+    let pkg = null;
+    try {
+      pkg = pkgText ? JSON.parse(pkgText) : null;
+    } catch {
+      console.error("::warning::package.json ist kein gültiges JSON");
+    }
+    return buildProfile({ agentsMd, rootFiles, workflows, pkg, head, headChecks: headState(checkRuns, statuses) });
+  } catch (e) {
+    console.error(`::warning::Repo-Profil nicht lesbar (${e.message}) — Bericht ohne Profil`);
+    return undefined;
+  }
+}
+
 async function main() {
   if (!reportToken) throw new Error("report-token missing (secret OPS_REPORT_TOKEN)");
   const gh = createGitHub({ token: input("github-token"), repo });
@@ -139,7 +173,8 @@ async function main() {
   output("merge-state", after ? JSON.stringify(mergeState(before, after, merged)) : "");
 
   const payload = buildReport({ plan, merged, mergeErrors, deployErrors, smokeResult, runUrl, scheduleNote: schedule.note });
-  await post(payload);
+  const profile = await readProfile(gh);
+  await post(profile ? { ...payload, profile } : payload);
   for (const c of payload.checks) summary(`- ${c.kind}: ${c.status} — ${c.detail}`);
 }
 
