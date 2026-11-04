@@ -98,6 +98,57 @@ Weitere Regeln:
 - Ist ein PR geschlossen oder gemergt, zieht das OS die offene Freigabe zurück.
 - PRs, die `.github/workflows/` ändern, erscheinen nicht in der Inbox. Sie werden in GitHub gemergt.
 
+## Wartungslauf einbinden
+
+Der ganze Lauf (Funktionstest, Wartung, Warten auf Deploy, Test nach dem Deploy, Rollback) liegt als wiederverwendbarer Workflow in `.github/workflows/maintenance.yml`. Im Repo genügt diese Datei; nur die Konfiguration unterscheidet sich:
+
+```yaml
+# .github/workflows/maintenance.yml
+name: Wartung
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Nur auswerten und melden, nichts mergen
+        type: boolean
+        default: true
+permissions: {}
+# Läufe nie überlappen lassen: ein zweiter Lauf könnte fremde Merges zurückrollen.
+concurrency:
+  group: maintenance
+  cancel-in-progress: false
+jobs:
+  wartung:
+    if: ${{ vars.OPS_MAINTENANCE == 'on' }}
+    uses: Marcowinni/ops-workflows/.github/workflows/maintenance.yml@v1
+    # Obergrenze für den Lauf; jeder Job fordert nur, was er braucht.
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      statuses: read
+      deployments: read
+    with:
+      http-checks: ${{ vars.SMOKE_HTTP }}
+      smoke-command: ${{ vars.SMOKE_COMMAND }}
+      smoke-install: ${{ vars.SMOKE_INSTALL }}
+      base-url: ${{ vars.PROD_URL }}
+      required-checks: ${{ vars.REQUIRED_CHECKS }}
+      rollback: ${{ vars.OPS_ROLLBACK != 'off' }}
+      dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+    secrets:
+      OPS_REPORT_TOKEN: ${{ secrets.OPS_REPORT_TOKEN }}
+      DEPLOY_HOOKS: ${{ secrets.DEPLOY_HOOKS }}
+```
+
+- Weitere Eingaben: `kernfunktion-checks` (HTTP-Prüfungen im Repo, per PR geprüft; laufen nur zusammen mit `http-checks` oder `smoke-command`), `min-deployments` (mehrere Vercel-Projekte in einem Repo).
+- Rechte: Der Aufrufer setzt die Obergrenze. `smoke` und `smoke-after` laufen trotzdem nur mit `contents: read` und ohne Secrets; den Schreib-Token für den Rollback sieht nur `verify-deploy`.
+- Secrets werden einzeln übergeben, nicht mit `secrets: inherit`: Der zentrale Workflow bekommt nur diese zwei.
+- `concurrency` bleibt im Aufrufer, nicht im zentralen Workflow.
+- Die Abschnitte «Einbinden» und «Test nach dem Deploy» unten beschreiben die Bausteine einzeln. Für ein Repo ohne eigene Schritte genügt diese Datei.
+
 ## Einbinden
 
 ```yaml

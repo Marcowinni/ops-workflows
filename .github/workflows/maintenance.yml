@@ -1,0 +1,201 @@
+# Zentraler Wartungslauf für Lösungen von TW Projects (ADR 0044, TWP-17 M1d).
+# Jedes Repo ruft ihn mit einer kurzen maintenance.yml auf, siehe README
+# «Wartungslauf einbinden». Eine Verbesserung hier gilt für alle Repos auf @v1.
+#
+# Ablauf: smoke → maintenance → deploy → smoke-after → verify-deploy.
+# Ein Merge wird nach dem Deploy nochmals getestet und bei Rot zurückgerollt.
+# Eine kaputte Einrichtung (Installation, Download) meldet nur.
+
+name: Wartung (zentral)
+
+on:
+  workflow_call:
+    inputs:
+      http-checks:
+        description: HTTP-Funktionstest, eine Zeile pro Seite "URL | erwarteter Text" (Variable SMOKE_HTTP)
+        type: string
+        default: ""
+      kernfunktion-checks:
+        description: >-
+          Weitere HTTP-Prüfungen, im Repo gepflegt (per PR geprüft). Laufen nur
+          zusammen mit http-checks oder smoke-command und auch, wenn der Schritt
+          davor rot ist.
+        type: string
+        default: ""
+      smoke-command:
+        description: Funktionstest als Befehl, ohne Installation (Variable SMOKE_COMMAND)
+        type: string
+        default: ""
+      smoke-install:
+        description: Installation für smoke-command (Variable SMOKE_INSTALL)
+        type: string
+        default: ""
+      base-url:
+        description: Produktions-URL, im Befehl als BASE_URL (Variable PROD_URL)
+        type: string
+        default: ""
+      required-checks:
+        description: CI-Checks, die auf einem Dependabot-PR grün sein müssen (Variable REQUIRED_CHECKS)
+        type: string
+        default: ""
+      min-deployments:
+        description: Anzahl Produktions-Umgebungen (z.B. mehrere Vercel-Projekte im Repo)
+        type: number
+        default: 1
+      rollback:
+        description: false = nach rotem Test nur melden (Variable OPS_ROLLBACK=off)
+        type: boolean
+        default: true
+      dry-run:
+        description: Nur auswerten und melden, nichts mergen
+        type: boolean
+        default: false
+    secrets:
+      OPS_REPORT_TOKEN:
+        description: Melde-Token der Lösung
+        required: true
+      DEPLOY_HOOKS:
+        description: Deploy-Hook-URL(s), falls der Host Bot-Commits nicht deployt
+        required: false
+
+# Each job states what it needs. The caller's job permissions are the upper
+# limit; a caller that grants too little fails at startup, before any step.
+permissions: {}
+
+# No concurrency here: the caller holds it at workflow level, as before. The
+# same group in both places would make the called jobs wait on their own run.
+
+jobs:
+  smoke:
+    name: Funktionstest Produktion
+    # Without a test the job is skipped and the run reports "kein automatischer
+    # Funktionstest" — then no update goes live without a click. smoke-after
+    # repeats this condition: without it, its empty steps would pass.
+    if: ${{ inputs.smoke-command != '' || inputs.http-checks != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Runs repo code with freshly updated packages: read-only, no secrets.
+    permissions:
+      contents: read
+    steps: &smoke-steps
+      # Test steps set result=pass|fail only once the test ran (smoke-http
+      # does it itself); after a deploy only "fail" rolls back. A second
+      # attempt after 60 s keeps one flaky request from doing that.
+      - name: Funktionstest (HTTP)
+        id: http
+        if: ${{ inputs.http-checks != '' }}
+        uses: Marcowinni/ops-workflows/smoke-http@v1
+        with:
+          checks: ${{ inputs.http-checks }}
+          attempts: 2
+      - name: Kernfunktion (HTTP)
+        id: kernfunktion
+        if: ${{ !cancelled() && inputs.kernfunktion-checks != '' }}
+        uses: Marcowinni/ops-workflows/smoke-http@v1
+        with:
+          checks: ${{ inputs.kernfunktion-checks }}
+          attempts: 2
+      - uses: actions/checkout@v7
+        if: ${{ inputs.smoke-command != '' }}
+      - uses: actions/setup-node@v7
+        if: ${{ inputs.smoke-command != '' }}
+        with:
+          node-version: 24
+      - name: Installation für den Funktionstest
+        if: ${{ inputs.smoke-command != '' && inputs.smoke-install != '' }}
+        env:
+          SMOKE_INSTALL: ${{ inputs.smoke-install }}
+        run: bash -c "$SMOKE_INSTALL"
+      - name: Funktionstest gegen Produktion
+        id: command
+        if: ${{ inputs.smoke-command != '' }}
+        env:
+          BASE_URL: ${{ inputs.base-url }}
+          SMOKE_COMMAND: ${{ inputs.smoke-command }}
+        run: |
+          if bash -c "$SMOKE_COMMAND"; then echo "result=pass" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "::warning::Funktionstest rot, zweiter Versuch in 60 s"
+          sleep 60
+          if bash -c "$SMOKE_COMMAND"; then echo "result=pass" >> "$GITHUB_OUTPUT"; exit 0; fi
+          echo "result=fail" >> "$GITHUB_OUTPUT"
+          exit 1
+
+  maintenance:
+    name: Wartung
+    needs: smoke
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      statuses: read
+    outputs:
+      deployed-sha: ${{ steps.maintain.outputs.deployed-sha }}
+      merge-state: ${{ steps.maintain.outputs.merge-state }}
+    steps:
+      - id: maintain
+        uses: Marcowinni/ops-workflows/maintain@v1
+        with:
+          report-token: ${{ secrets.OPS_REPORT_TOKEN }}
+          smoke-result: ${{ needs.smoke.result }}
+          required-checks: ${{ inputs.required-checks }}
+          deploy-hooks: ${{ secrets.DEPLOY_HOOKS }}
+          dry-run: ${{ inputs.dry-run }}
+
+  deploy:
+    name: Warten auf Deploy
+    needs: maintenance
+    # !cancelled(): also when only the report to the OS failed after merging.
+    if: ${{ !cancelled() && needs.maintenance.outputs.deployed-sha != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      deployments: read
+    outputs:
+      result: ${{ steps.wait.outputs.result }}
+      detail: ${{ steps.wait.outputs.detail }}
+    steps:
+      - id: wait
+        uses: Marcowinni/ops-workflows/wait-deploy@v1
+        with:
+          sha: ${{ needs.maintenance.outputs.deployed-sha }}
+          min-deployments: ${{ inputs.min-deployments }}
+
+  smoke-after:
+    name: Funktionstest nach Deploy
+    needs: deploy
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && (inputs.smoke-command != '' || inputs.http-checks != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      # fail if any test step failed, pass if one passed and none failed, else empty (setup broken)
+      result: ${{ (steps.http.outputs.result == 'fail' || steps.kernfunktion.outputs.result == 'fail' || steps.command.outputs.result == 'fail') && 'fail' || ((steps.http.outputs.result == 'pass' || steps.kernfunktion.outputs.result == 'pass' || steps.command.outputs.result == 'pass') && 'pass' || '') }}
+    steps: *smoke-steps
+
+  verify-deploy:
+    name: Test nach Deploy auswerten
+    needs: [smoke, maintenance, deploy, smoke-after]
+    if: ${{ !cancelled() && needs.maintenance.outputs.deployed-sha != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The only job after the merge with a write token. It runs no repo code.
+    permissions:
+      contents: write
+      deployments: read
+    steps:
+      - uses: Marcowinni/ops-workflows/verify-deploy@v1
+        with:
+          report-token: ${{ secrets.OPS_REPORT_TOKEN }}
+          merge-state: ${{ needs.maintenance.outputs.merge-state }}
+          pre-smoke-result: ${{ needs.smoke.result }}
+          deploy-result: ${{ needs.deploy.outputs.result }}
+          deploy-detail: ${{ needs.deploy.outputs.detail }}
+          smoke-job: ${{ needs.smoke-after.result }}
+          smoke-result: ${{ needs.smoke-after.outputs.result }}
+          rollback: ${{ inputs.rollback }}
+          deploy-hooks: ${{ secrets.DEPLOY_HOOKS }}
+          min-deployments: ${{ inputs.min-deployments }}
