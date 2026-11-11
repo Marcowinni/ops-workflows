@@ -142,6 +142,15 @@ jobs:
 
 Ohne Smoke-Job `smoke-result` weglassen: Der Lauf meldet dann «kein automatischer Funktionstest», und kein Update geht ohne Klick live.
 
+### Mit aktivem Schutz: Deploy-Key (Q53b)
+
+Sobald die Rulesets `main-schutz` und `nur-marco-merged` aktiv sind, darf nur noch Marco (Admin) oder der Deploy-Key den Default-Branch ändern; Schreiben mit `GITHUB_TOKEN` über die API wird abgewiesen. Dann in `maintain` und `verify-deploy` zusätzlich `deploy-key: ${{ secrets.OPS_DEPLOY_KEY }}` übergeben:
+
+- `maintain` merged per `git push` mit dem Key, als echter Merge-Commit (`--no-ff`, nicht Squash): Nur so schliesst GitHub den PR als gemergt. `merge-method` gilt dann nicht. Der Merge ist auf den geprüften Head-Commit festgelegt; hat sich der PR bewegt, wird nicht gemergt.
+- `verify-deploy` schreibt den Rollback-Commit lokal und pusht ihn ohne Force; hat sich der Branch bewegt, lehnt GitHub ab.
+- Der Key liegt nur während des Laufs in einer Datei (Rechte 0600) und wird danach gelöscht; der Host-Key von github.com ist fest hinterlegt. Leseschritte und Tags laufen weiter über `github-token`.
+- Ohne `deploy-key` bleibt alles wie bisher. Den Key erzeugt `setup/new-project.mjs --protect`.
+
 ## Check standard
 
 Job `standard` der zentralen CI (Action `standard/`, folgt dem Tag `@v1`). Er bündelt die Text- und Dateiregeln des Coding-Standards (ADR 0052 Q59):

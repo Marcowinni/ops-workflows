@@ -5,6 +5,7 @@
 // freshly updated packages.
 import { appendFileSync } from "node:fs";
 import { parseHooks, triggerDeployHooks } from "../maintain/lib/deploy-hooks.mjs";
+import { createDeployKeyGit, withDeployKey } from "../maintain/lib/deploy-key-git.mjs";
 import { createGitHub } from "../maintain/lib/github.mjs";
 import { createReporter } from "../maintain/lib/os-report.mjs";
 import { deployStateOnce, waitForDeploy } from "../wait-deploy/lib/deployments.mjs";
@@ -50,7 +51,17 @@ async function main() {
     return;
   }
 
-  const gh = createGitHub({ token: input("github-token"), repo });
+  const api = createGitHub({ token: input("github-token"), repo });
+  const deployKey = input("deploy-key");
+  const keyGit = deployKey ? createDeployKeyGit({ key: deployKey, repo }) : null;
+  try {
+    await verify(keyGit ? withDeployKey(api, keyGit) : api, { state, deployOptions, timeoutMs, deployHooks, post });
+  } finally {
+    keyGit?.close();
+  }
+}
+
+async function verify(gh, { state, deployOptions, timeoutMs, deployHooks, post }) {
   const deployResult = input("deploy-result");
   let baseDeployGreen = null;
   if (deployResult === "failure") {
