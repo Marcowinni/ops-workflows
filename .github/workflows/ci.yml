@@ -7,6 +7,10 @@
 #   website         install, build, Secret-Scan
 #   web_app         + lint, typecheck (falls Skript vorhanden)
 #   integrated_app  + test (falls Skript vorhanden)
+# Q42: ai_workspace, ai_process und platform laufen auf Stufe integrated_app.
+# Unbekannt / fehlend / `offen` fällt auf website zurück (Lücke im Summary).
+# Dazu der Job `standard` (Text-/Dateiregeln, Action standard/, folgt dem Tag
+# @v1); Modus über `standard-mode` (warn = nur Warnungen, enforce = bricht ab).
 # Fehlt ein Skript in package.json, wird der Schritt übersprungen und im
 # Job-Summary als Lücke vermerkt. Ein fehlender Build bricht ab — ausser auf
 # Stufe website: Statische Sites haben oft keinen Build (und manchmal kein
@@ -35,6 +39,10 @@ on:
         description: Name des Build-Skripts in package.json
         type: string
         default: build
+      standard-mode:
+        description: warn (nur Warnungen) | enforce (Befunde lassen den Job scheitern)
+        type: string
+        default: warn
 
 permissions:
   contents: read
@@ -50,8 +58,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Other solution types (ai_*, platform) or `offen` fall back to the
-      # minimum level website and show up as a gap; never guess a stricter one.
+      # ai_workspace, ai_process and platform map to integrated_app (Q42).
+      # Missing or `offen` falls back to the minimum level website and shows
+      # up as a gap; never guess a stricter one.
       - name: Stufe bestimmen
         id: level
         working-directory: .
@@ -64,6 +73,7 @@ jobs:
           fi
           case "$level" in
             website|web_app|integrated_app) ;;
+            ai_workspace|ai_process|platform) level=integrated_app ;;
             *) echo "unknown=${level:-fehlt}" >> "$GITHUB_OUTPUT"; level=website ;;
           esac
           echo "value=$level" >> "$GITHUB_OUTPUT"
@@ -140,6 +150,22 @@ jobs:
             [ "${{ steps.level.outputs.value }}" = "integrated_app" ] && [ "${{ steps.pm.outputs.has_test }}" != "true" ] && echo "- Lücke: kein \`test\`-Skript"
             true
           } >> "$GITHUB_STEP_SUMMARY"
+
+  standard:
+    name: standard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # base sha must be reachable for the PR diff
+      # Follows the v1 tag of this repo, like the callers of this workflow.
+      - uses: Marcowinni/ops-workflows/standard@v1
+        with:
+          level: ${{ inputs.level }}
+          mode: ${{ inputs.standard-mode }}
 
   secret-scan:
     name: secret-scan
