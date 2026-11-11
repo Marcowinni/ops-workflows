@@ -3,7 +3,6 @@
 export const NOT_CHECKED = [
   "Build und Secret-Scan (Jobs checks / secret-scan der zentralen CI)",
   "diff-cover, Stryker, KI-Review",
-  "SECURITY.md Standardteil gegen zentrale Fassung (existiert noch nicht)",
   "Go-live-Punkte: docs/RUNBOOK.md, docs/audits/",
 ];
 

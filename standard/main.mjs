@@ -10,6 +10,8 @@ import { runStandard } from "./lib/run.mjs";
 const input = (name) => (process.env[`INPUT_${name.toUpperCase()}`] ?? "").trim();
 const root = process.env.GITHUB_WORKSPACE || process.cwd();
 
+const centralSecurity = readFileSync(new URL("./security-standard.md", import.meta.url), "utf8");
+
 const ctx = {
   read: (path) => (existsSync(join(root, path)) && statSync(join(root, path)).isFile() ? readFileSync(join(root, path), "utf8") : null),
   isDir: (path) => existsSync(join(root, path)) && statSync(join(root, path)).isDirectory(),
@@ -26,7 +28,7 @@ async function main() {
   if (!["warn", "enforce"].includes(mode)) throw new Error(`mode must be warn or enforce, got «${mode}»`);
   const pr = pullRequestFromEvent();
   const api = createGitClient({ cwd: root });
-  const { findings, stufe, source } = await runStandard({ ctx, levelInput: input("level"), pr, api });
+  const { findings, stufe, source } = await runStandard({ ctx, levelInput: input("level"), pr, api, centralSecurity });
 
   for (const f of findings) console.log(annotation(f));
   const summary = summaryMarkdown({ findings, stufe, source, mode, event: pr ? "Pull Request" : "Push" });

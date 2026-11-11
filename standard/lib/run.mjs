@@ -6,9 +6,10 @@ import { checkRepo, parseSteckbrief } from "./repo-rules.mjs";
 
 /**
  * ctx: { read, isDir }; pr: null | { number, body, author, baseSha };
+ * centralSecurity: text of the central security standard (null = rule skipped).
  * api: { pullFiles(number, baseSha), dirExists(dir, ref) } (local git) (only used when pr is set).
  */
-export async function runStandard({ ctx, levelInput, pr, api }) {
+export async function runStandard({ ctx, levelInput, pr, api, centralSecurity = null }) {
   const steckbrief = parseSteckbrief(ctx.read("AGENTS.md"));
   const level = resolveLevel({ levelInput, steckbrief });
   const findings = [...level.findings];
@@ -23,7 +24,7 @@ export async function runStandard({ ctx, levelInput, pr, api }) {
   }
 
   const codeChanged = files ? codeChangedIn(files) : false;
-  findings.push(...checkRepo({ stufe: level.stufe, ctx, steckbrief, codeChanged }));
+  findings.push(...checkRepo({ stufe: level.stufe, ctx, steckbrief, codeChanged, centralSecurity }));
 
   if (files) {
     try {

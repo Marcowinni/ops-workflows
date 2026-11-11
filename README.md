@@ -147,12 +147,31 @@ Ohne Smoke-Job `smoke-result` weglassen: Der Lauf meldet dann «kein automatisch
 Job `standard` der zentralen CI (Action `standard/`, folgt dem Tag `@v1`). Er bündelt die Text- und Dateiregeln des Coding-Standards (ADR 0052 Q59):
 
 - Pflichtdateien je Stufe (`AGENTS.md`, `CLAUDE.md` = nur `@AGENTS.md`, `docs/PLAN.md`; ab Stufe 2 auch `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/decisions/`), AGENTS.md höchstens 150 Zeilen, Steckbrief vollständig ohne veraltete Felder.
+- Ab Stufe 2: Teil 1 von `docs/SECURITY.md` (Block zwischen `<!-- standard:start -->` und `<!-- standard:end -->`) muss der zentralen Fassung `standard/security-standard.md` entsprechen (Regel `security-standard`; Zeilenenden und Leerraum am Dateiende werden ignoriert). Teil 2 des Dokuments ist frei.
 - Design freigegeben (Q45): kein Steckbrief-Wert `offen`, «Ziel» im Plan ausgefüllt, ab Stufe 2 eine Architektur mit Inhalt. Auf einem PR mit Code heisst der Befund «Kein Code vor Entwurf».
 - Nur bei Pull Requests (Dependabot ausgenommen): Code geändert → `docs/PLAN.md` mitgeändert; PR-Beschreibung mit `Arbeitspaket`, `Was und warum`, `Beweis`, `Nicht geprüft` (Code-PRs); ab Stufe 2 bei Migration, neuem Top-Level-Ordner oder Service-Definition auch `docs/ARCHITECTURE.md`.
 
 Modus über `standard-mode`: `warn` (Standard) meldet Befunde als Warnungen und im Job-Summary, der Job bleibt grün. `enforce` lässt ihn bei Befunden scheitern. Im Summary steht, was dieser Schritt nicht prüft.
 
 Ausnahme beim Plan: eine Zeile `plan: unverändert` in der PR-Beschreibung, wenn der Code den Plan nicht berührt.
+
+## Neues Projekt anlegen
+
+Skript `setup/new-project.mjs` (Node 24, keine Abhängigkeiten). Läuft auf dem eigenen Rechner mit angemeldetem `gh`; es legt das Repo aus `project-template` an und richtet die Anbindung ein (ADR 0052 Q47, Q53b).
+
+```bash
+gh repo clone Marcowinni/ops-workflows /tmp/ops-workflows -- --depth 1 --branch v1 && node /tmp/ops-workflows/setup/new-project.mjs <name>
+```
+
+Aufruf: `node setup/new-project.mjs <name> [--owner Marcowinni] [--template Marcowinni/project-template] [--protect] [--dry-run]`
+
+- `<name>`: `^[a-z0-9][a-z0-9-]{1,62}$`. Existiert das Repo schon, bricht das Skript ab.
+- Schritte: privates Repo aus der Vorlage anlegen und klonen (in den aktuellen Ordner), Melde-Token erzeugen und als Secret `OPS_REPORT_TOKEN` setzen. Der Token wird weder ausgegeben noch gespeichert; ausgegeben wird nur sein sha256 (`report_token_hash`).
+- `--protect` (Q53b, standardmässig aus, bis der Schutz scharfgeschaltet wird): erzeugt einen Deploy-Key (Secret `OPS_DEPLOY_KEY`, Schlüsselordner wird gelöscht) und legt die Rulesets `main-schutz` und `nur-marco-merged` an.
+- `--dry-run`: prüft die Eingaben und zeigt alle Befehle (Token als `<token>`), führt nichts aus.
+- Schlägt ein Schritt fehl, stoppt das Skript ohne Neuversuch und nennt, was schon lief und was manuell aufzuräumen ist.
+
+Den Register-Eintrag im Business OS (`create_solution` mit `repo_url`, `report_token_hash`, Status pausiert), den Steckbrief und die Zielklärung («Neues Projekt») macht danach der Agent.
 
 ## Funktionstest ohne E2E: `smoke-http`
 
