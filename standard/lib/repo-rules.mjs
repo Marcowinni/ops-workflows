@@ -3,6 +3,7 @@
 import { parseSteckbrief } from "../../maintain/lib/profile.mjs";
 import { finding } from "./finding.mjs";
 import { contentLines, sectionContent } from "./markdown.mjs";
+import { checkSecurityStandard } from "./security-rule.mjs";
 
 const MAX_AGENTS_LINES = 150;
 const REQUIRED_FIELDS = ["name", "typ", "business_ref", "daten", "solution_type", "paket", "stack", "befehle", "zweck", "kunde", "ausnahmen"];
@@ -60,10 +61,11 @@ export function checkDesign({ stufe, steckbrief, ctx, codeChanged = false }) {
   return [finding("design-nicht-freigegeben", `Design nicht freigegeben: ${detail}.`, "docs/PLAN.md")];
 }
 
-export function checkRepo({ stufe, ctx, steckbrief, codeChanged = false }) {
+export function checkRepo({ stufe, ctx, steckbrief, codeChanged = false, centralSecurity = null }) {
   return [
     ...checkFiles({ stufe, ctx }),
     ...checkAgents({ agentsMd: ctx.read("AGENTS.md"), steckbrief }),
     ...checkDesign({ stufe, steckbrief, ctx, codeChanged }),
+    ...checkSecurityStandard({ stufe, ctx, central: centralSecurity }),
   ];
 }

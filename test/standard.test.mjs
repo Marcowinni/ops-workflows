@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { resolveLevel } from "../standard/lib/level.mjs";
 import { checkPr } from "../standard/lib/pr-rules.mjs";
 import { annotation, shouldFail, summaryMarkdown } from "../standard/lib/report.mjs";
 import { checkAgents, checkDesign, checkFiles, parseSteckbrief } from "../standard/lib/repo-rules.mjs";
 import { runStandard } from "../standard/lib/run.mjs";
+import { checkSecurityStandard } from "../standard/lib/security-rule.mjs";
 
 const FIELDS = ["name: x", "typ: loesung", "business_ref: TWP-1", "daten: keine", "solution_type: web_app", "paket: a", "stack: node", "befehle:", "  dev: npm run dev", "zweck: z", "kunde: k", "ausnahmen: keine"];
 const agents = (lines = FIELDS) => `# X\n\n\`\`\`yaml\n${lines.join("\n")}\n\`\`\`\n`;
@@ -192,4 +194,38 @@ test("git-diff: pullFiles and dirExists against a temp repo", async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const CENTRAL = "<!-- standard:start -->\n## Teil 1\nRegel A\n<!-- standard:end -->\n";
+const secCtx = (doc) => makeCtx({ "docs/SECURITY.md": doc });
+const secIds = (stufe, doc, central = CENTRAL) => ids(checkSecurityStandard({ stufe, ctx: secCtx(doc), central }));
+
+test("security-standard: equal block passes, CRLF and trailing whitespace ignored, Teil 2 free", () => {
+  assert.deepEqual(secIds(2, `# Sicherheit\n\n${CENTRAL}\n## Teil 2\nfrei\n`), []);
+  assert.deepEqual(secIds(3, CENTRAL.replace(/\n/g, "\r\n") + "\n\n  "), []);
+});
+
+test("security-standard: differing block and missing markers are findings", () => {
+  const diff = checkSecurityStandard({ stufe: 2, ctx: secCtx(CENTRAL.replace("Regel A", "Regel B")), central: CENTRAL });
+  assert.deepEqual(ids(diff), ["security-standard"]);
+  assert.match(diff[0].message, /weicht von der zentralen Version ab/);
+  const missing = checkSecurityStandard({ stufe: 2, ctx: secCtx("# nur Teil 2\n"), central: CENTRAL });
+  assert.deepEqual(ids(missing), ["security-standard"]);
+  assert.match(missing[0].message, /Markierungen fehlen/);
+});
+
+test("security-standard: skipped on Stufe 1, without file or without central text", () => {
+  assert.deepEqual(secIds(1, "egal"), []);
+  assert.deepEqual(checkSecurityStandard({ stufe: 2, ctx: makeCtx({}), central: CENTRAL }), []);
+  assert.deepEqual(secIds(2, "egal", null), []);
+});
+
+test("security-standard: wired into runStandard; shipped central file has both markers", async () => {
+  const ctx = makeCtx({ ...fullFiles, "docs/SECURITY.md": "# frei\n" }, ["docs/decisions"]);
+  const r = await runStandard({ ctx, levelInput: "", pr: null, api: null, centralSecurity: CENTRAL });
+  assert.ok(ids(r.findings).includes("security-standard"));
+  const real = readFileSync(new URL("../standard/security-standard.md", import.meta.url), "utf8");
+  assert.deepEqual(secIds(2, real, real), []);
+  assert.ok(real.includes("<!-- standard:start -->") && real.includes("<!-- standard:end -->"));
+  assert.ok(!summaryMarkdown({ findings: [], stufe: 2, source: "x", mode: "warn", event: "Push" }).includes("Standardteil"));
 });
