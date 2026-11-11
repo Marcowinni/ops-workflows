@@ -121,5 +121,5 @@ test("execute: failure stops, lists done steps, cleans tmpdir, no retry, no secr
 
 test("summary names repo, hash, protect state and next steps", () => {
   const s = formatSummary({ ...opts, tokenHash: "ab".repeat(32), protect: false });
-  for (const part of ["https://github.com/Marcowinni/demo", "ab".repeat(32), "nein", "create_solution", "Steckbrief", "Neues Projekt"]) assert.ok(s.includes(part), part);
+  for (const part of ["https://github.com/Marcowinni/demo", "ab".repeat(32), "nein", "create_solution", "update_solution", "status: paused", "Steckbrief", "Neues Projekt"]) assert.ok(s.includes(part), part);
 });
