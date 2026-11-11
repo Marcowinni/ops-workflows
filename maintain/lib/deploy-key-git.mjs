@@ -110,8 +110,11 @@ export function createDeployKeyGit({
 export function withDeployKey(gh, keyGit) {
   return {
     ...gh,
+    // Only PRs into the default branch: merge-state and the rollback assume it,
+    // and a PR into another branch must not carry that branch onto production.
     async merge(number, sha) {
-      const { branch } = await gh.branchHead();
+      const [{ branch }, target] = await Promise.all([gh.branchHead(), gh.pullBaseRef(number)]);
+      if (target !== branch) throw new Error(`PR #${number} zielt auf ${target}, nicht auf ${branch}`);
       return keyGit.merge(branch, number, sha);
     },
     createCommit: (commit) => keyGit.createCommit(commit),

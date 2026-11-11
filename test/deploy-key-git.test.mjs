@@ -100,3 +100,13 @@ test("deploy-key git: rollBack restores the base tree by fast-forward; a moved b
     rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+test("withDeployKey: merges only PRs into the default branch", async () => {
+  const merged = [];
+  const keyGit = { merge: async (branch, number, sha) => (merged.push([branch, number, sha]), { sha: "m" }) };
+  const api = { branchHead: async () => ({ branch: "main", sha: "h" }), pullBaseRef: async (n) => (n === 1 ? "main" : "release") };
+  const gh = withDeployKey(api, keyGit);
+  assert.deepEqual(await gh.merge(1, "s1"), { sha: "m" });
+  await assert.rejects(gh.merge(2, "s2"), /zielt auf release, nicht auf main/);
+  assert.deepEqual(merged, [["main", 1, "s1"]]);
+});
