@@ -58,7 +58,7 @@ jobs:
     uses: Marcowinni/ops-workflows/.github/workflows/ci.yml@v1
 ```
 
-Die Stufe kommt aus `solution_type` im Steckbrief (`AGENTS.md`). Nur wo es keinen Steckbrief gibt: `with: { level: web_app }`. Andere Typen (`ai_*`, `platform`) oder `offen` laufen mit Mindeststufe `website` und erscheinen im Summary als Lücke.
+Die Stufe kommt aus `solution_type` im Steckbrief (`AGENTS.md`). Nur wo es keinen Steckbrief gibt: `with: { level: web_app }`. `ai_workspace`, `ai_process` und `platform` laufen als `integrated_app` (Q42). Unbekannt, fehlend oder `offen` läuft mit Mindeststufe `website` und erscheint im Summary als Lücke.
 
 | Stufe | Schritte |
 |---|---|
@@ -68,7 +68,7 @@ Die Stufe kommt aus `solution_type` im Steckbrief (`AGENTS.md`). Nur wo es keine
 
 - Paketmanager wird am Lockfile erkannt (pnpm oder npm), mit Cache.
 - Fehlt `lint`, `typecheck` oder `test` in `package.json`, wird der Schritt übersprungen und im Summary als Lücke vermerkt. Ein fehlendes Build-Skript bricht ab, ausser auf Stufe `website`: Dort (auch ohne `package.json`) läuft stattdessen `node --check` über alle JS-Dateien.
-- Weitere Eingaben: `working-directory` (Standard `.`), `node-version` (Standard `24`), `build-script` (Standard `build`).
+- Weitere Eingaben: `working-directory` (Standard `.`), `node-version` (Standard `24`), `build-script` (Standard `build`), `standard-mode` (Standard `warn`, siehe «Check standard»).
 - Für die Wartung: `required-checks: "ci / checks, ci / secret-scan"`.
 - Dependabot-PRs merged der Wartungslauf nach seinen Regeln. Eigene `dependabot-auto-merge.yml` im Repo entfernen, sobald es eingebunden ist.
 
@@ -141,6 +141,18 @@ jobs:
 ```
 
 Ohne Smoke-Job `smoke-result` weglassen: Der Lauf meldet dann «kein automatischer Funktionstest», und kein Update geht ohne Klick live.
+
+## Check standard
+
+Job `standard` der zentralen CI (Action `standard/`, folgt dem Tag `@v1`). Er bündelt die Text- und Dateiregeln des Coding-Standards (ADR 0052 Q59):
+
+- Pflichtdateien je Stufe (`AGENTS.md`, `CLAUDE.md` = nur `@AGENTS.md`, `docs/PLAN.md`; ab Stufe 2 auch `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/decisions/`), AGENTS.md höchstens 150 Zeilen, Steckbrief vollständig ohne veraltete Felder.
+- Design freigegeben (Q45): kein Steckbrief-Wert `offen`, «Ziel» im Plan ausgefüllt, ab Stufe 2 eine Architektur mit Inhalt. Auf einem PR mit Code heisst der Befund «Kein Code vor Entwurf».
+- Nur bei Pull Requests (Dependabot ausgenommen): Code geändert → `docs/PLAN.md` mitgeändert; PR-Beschreibung mit `Arbeitspaket`, `Was und warum`, `Beweis`, `Nicht geprüft` (Code-PRs); ab Stufe 2 bei Migration, neuem Top-Level-Ordner oder Service-Definition auch `docs/ARCHITECTURE.md`.
+
+Modus über `standard-mode`: `warn` (Standard) meldet Befunde als Warnungen und im Job-Summary, der Job bleibt grün. `enforce` lässt ihn bei Befunden scheitern. Im Summary steht, was dieser Schritt nicht prüft.
+
+Ausnahme beim Plan: eine Zeile `plan: unverändert` in der PR-Beschreibung, wenn der Code den Plan nicht berührt.
 
 ## Funktionstest ohne E2E: `smoke-http`
 

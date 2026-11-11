@@ -1,0 +1,24 @@
+name: TW Standard-Check
+description: >-
+  Text- und Dateiregeln des Coding-Standards (ADR 0052 Q59): Pflichtdateien,
+  AGENTS.md-Steckbrief, Design freigegeben, Plan/Architektur/PR-Beschreibung
+  bei Pull Requests. Modus warn: nur Warnungen. PR-Daten aus git (Checkout mit fetch-depth: 0).
+author: TW Projects
+
+inputs:
+  level:
+    description: >-
+      website | web_app | integrated_app (oder 1 | 2 | 3). Leer = solution_type
+      aus dem Steckbrief in AGENTS.md.
+    required: false
+    default: ""
+  mode:
+    description: >-
+      warn (Standard): Befunde als Warnungen, Schritt bleibt grün. enforce:
+      Befunde der Schwere error lassen den Schritt scheitern.
+    required: false
+    default: warn
+
+runs:
+  using: node24
+  main: main.mjs
