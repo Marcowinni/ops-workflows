@@ -8,6 +8,7 @@ import { appendFileSync } from "node:fs";
 import { evaluateChecks } from "./lib/checks.mjs";
 import { classifyUpdate } from "./lib/classify.mjs";
 import { parseHooks, triggerDeployHooks } from "./lib/deploy-hooks.mjs";
+import { createDeployKeyGit, withDeployKey } from "./lib/deploy-key-git.mjs";
 import { createGitHub } from "./lib/github.mjs";
 import { createReporter } from "./lib/os-report.mjs";
 import { autoMergeGate, planMerges, withApproved } from "./lib/plan.mjs";
@@ -135,8 +136,17 @@ async function readProfile(gh) {
 
 async function main() {
   if (!reportToken) throw new Error("report-token missing (secret OPS_REPORT_TOKEN)");
-  const gh = createGitHub({ token: input("github-token"), repo });
+  const api = createGitHub({ token: input("github-token"), repo });
+  const deployKey = input("deploy-key");
+  const keyGit = deployKey && !dryRun ? createDeployKeyGit({ key: deployKey, repo }) : null;
+  try {
+    await run(keyGit ? withDeployKey(api, keyGit) : api, Boolean(keyGit));
+  } finally {
+    keyGit?.close();
+  }
+}
 
+async function run(gh, viaDeployKey) {
   const regressed = parseRegressions(await gh.regressionMessages());
   const prs = await Promise.all((await gh.dependabotPulls()).map((pr) => inspect(gh, pr, regressed)));
   const gate = autoMergeGate({ requiredChecks, smokeResult });
@@ -144,6 +154,7 @@ async function main() {
 
   summary(`## Wartung ${repo}`);
   summary(`Funktionstest: ${smokeResult} · Auto-Merge: ${gate.allowed ? "erlaubt" : `aus (${gate.reason})`}${dryRun ? " · DRY-RUN" : ""}`);
+  summary(`Schreibweg: ${viaDeployKey ? "Deploy-Key (Merge-Commit)" : `API (${mergeMethod})`}`);
   for (const pr of prs) {
     summary(`- #${pr.number} ${pr.title} — ${pr.bump}, Checks ${pr.checks.state}${pr.regression ? ` · ${pr.regression}` : ""}`);
   }

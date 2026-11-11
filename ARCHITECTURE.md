@@ -14,7 +14,7 @@ Fünf Actions plus ein Setup-Skript, je ein Ordner mit `action.yml` + `main.mjs`
 
 Dazu ein wiederverwendbarer Workflow `.github/workflows/ci.yml` (zentrale CI für Pull Requests, Stufen `website` / `web_app` / `integrated_app`; Jobs `checks`, `standard`, `secret-scan`); er braucht keine eigene Logik in `lib/` und ruft `standard/` über den Tag `@v1` auf.
 
-Gemeinsam genutzt (liegt in `maintain/lib/`, weil `maintain` der Kern ist): `profile.mjs` (`parseSteckbrief`, auch von `standard/`), `github.mjs` (REST-Client), `os-report.mjs` (Bericht an `solution_report`), `deploy-hooks.mjs`, `regression.mjs` (Regressions-Sperre). `verify-deploy` nutzt ausserdem `wait-deploy/lib/deployments.mjs` für den Deploy des Rollbacks.
+Gemeinsam genutzt (liegt in `maintain/lib/`, weil `maintain` der Kern ist): `profile.mjs` (`parseSteckbrief`, auch von `standard/`), `github.mjs` (REST-Client), `os-report.mjs` (Bericht an `solution_report`), `deploy-hooks.mjs`, `regression.mjs` (Regressions-Sperre), `deploy-key-git.mjs` (Schreibweg per Deploy-Key über SSH, wenn der Input `deploy-key` gesetzt ist; ADR 0052 Q53b). `verify-deploy` nutzt ausserdem `wait-deploy/lib/deployments.mjs` für den Deploy des Rollbacks.
 
 ## Datenfluss
 

@@ -56,6 +56,10 @@ export function createGitHub({ token, repo, apiUrl = "https://api.github.com" })
       }
       return null;
     },
+    /** Target branch of a PR. */
+    async pullBaseRef(number) {
+      return (await request("GET", `/pulls/${number}`)).base.ref;
+    },
     /** sha pins the merge to the commit whose checks were evaluated. */
     async merge(number, sha, method) {
       return request("PUT", `/pulls/${number}/merge`, { sha, merge_method: method });
