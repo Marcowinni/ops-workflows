@@ -27,7 +27,7 @@ Zentrale Version: `Marcowinni/ops-workflows` `standard/security-standard.md` (AD
 17. **Header:** Antworten setzen mindestens CSP, HSTS, X-Content-Type-Options und Referrer-Policy.
 18. **Nachvollziehbarkeit:** Änderungen an Kundendaten und Rechten sind nachvollziehbar (wer, was, wann); Nutzer können diese Einträge nicht ändern.
 19. **Ruhende Daten:** Datenbank, Backups und Dateispeicher sind verschlüsselt (Funktion des Hosters genügt, wenn dokumentiert); automatisches Backup aktiv.
-20. **Fehler-Überwachung:** Sentry (EU-Region) für Browser und Server, `sendDefaultPii` aus.
+20. **Fehler-Überwachung:** Sentry (EU-Region) für Browser und Server, `sendDefaultPii` aus, im Sentry-Projekt IP-Speicherung aus («Prevent Storing of IP Addresses»).
 21. **Kosten:** variable Kosten (Hosting, APIs, KI) sind sichtbar und haben ein Limit oder einen Alarm.
 
 ### Wenn das Produkt KI-Agenten enthält
