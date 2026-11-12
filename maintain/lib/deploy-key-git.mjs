@@ -1,5 +1,5 @@
 // Write path over SSH with the repo's deploy key (ADR 0052 Q53b). Once the
-// rulesets are active, only admins and deploy keys may update the default
+// ruleset is active, only the deploy key may update the default
 // branch, so maintenance merges and the auto-rollback push with the key
 // instead of writing through the API with GITHUB_TOKEN. Reads stay on the API.
 import { execFileSync } from "node:child_process";

@@ -41,7 +41,7 @@ inputs:
     description: >-
       Privater Deploy-Key des Repos (Secret OPS_DEPLOY_KEY, ADR 0052 Q53b).
       Gesetzt: Wartungs-Merges als Merge-Commit per git push mit dem Key statt über die API; nötig,
-      sobald die Rulesets aktiv sind. Leer: Schreiben über github-token wie bisher.
+      sobald das Ruleset main-schutz aktiv ist. Leer: Schreiben über github-token wie bisher.
     required: false
     default: ""
   github-token:

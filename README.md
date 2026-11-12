@@ -144,7 +144,7 @@ Ohne Smoke-Job `smoke-result` weglassen: Der Lauf meldet dann «kein automatisch
 
 ### Mit aktivem Schutz: Deploy-Key (Q53b)
 
-Sobald die Rulesets `main-schutz` und `nur-marco-merged` aktiv sind, darf nur noch Marco (Admin) oder der Deploy-Key den Default-Branch ändern; Schreiben mit `GITHUB_TOKEN` über die API wird abgewiesen. Dann in `maintain` und `verify-deploy` zusätzlich `deploy-key: ${{ secrets.OPS_DEPLOY_KEY }}` übergeben:
+Sobald das Ruleset `main-schutz` aktiv ist, geht jede Änderung am Default-Branch nur noch über einen PR mit grünen Pflicht-Checks, für Marco, Till und Agenten gleich (ADR 0052 Q48e). Ausnahme ist nur der Deploy-Key; Schreiben mit `GITHUB_TOKEN` über die API wird abgewiesen. Dann in `maintain` und `verify-deploy` zusätzlich `deploy-key: ${{ secrets.OPS_DEPLOY_KEY }}` übergeben:
 
 - `maintain` merged per `git push` mit dem Key, als echter Merge-Commit (`--no-ff`, nicht Squash): Nur so schliesst GitHub den PR als gemergt. `merge-method` gilt dann nicht. Der Merge ist auf den geprüften Head-Commit festgelegt; hat sich der PR bewegt, wird nicht gemergt.
 - `verify-deploy` schreibt den Rollback-Commit lokal und pusht ihn ohne Force; hat sich der Branch bewegt, lehnt GitHub ab.
@@ -176,7 +176,7 @@ Aufruf: `node setup/new-project.mjs <name> [--owner Marcowinni] [--template Marc
 
 - `<name>`: `^[a-z0-9][a-z0-9-]{1,62}$`. Existiert das Repo schon, bricht das Skript ab.
 - Schritte: privates Repo aus der Vorlage anlegen und klonen (in den aktuellen Ordner), Melde-Token erzeugen und als Secret `OPS_REPORT_TOKEN` setzen. Der Token wird weder ausgegeben noch gespeichert; ausgegeben wird nur sein sha256 (`report_token_hash`).
-- `--protect` (Q53b, standardmässig aus, bis der Schutz scharfgeschaltet wird): erzeugt einen Deploy-Key (Secret `OPS_DEPLOY_KEY`, Schlüsselordner wird gelöscht) und legt die Rulesets `main-schutz` und `nur-marco-merged` an.
+- `--protect` (Q53b, standardmässig aus, bis der Schutz scharfgeschaltet wird): erzeugt einen Deploy-Key (Secret `OPS_DEPLOY_KEY`, Schlüsselordner wird gelöscht) und legt das Ruleset `main-schutz` an (PR-Pflicht und Pflicht-Checks für alle, Ausnahme nur der Deploy-Key; Q48e: kein Ruleset «nur Marco merged» mehr, Marco und Till mergen gleichberechtigt).
 - `--dry-run`: prüft die Eingaben und zeigt alle Befehle (Token als `<token>`), führt nichts aus.
 - Schlägt ein Schritt fehl, stoppt das Skript ohne Neuversuch und nennt, was schon lief und was manuell aufzuräumen ist.
 
