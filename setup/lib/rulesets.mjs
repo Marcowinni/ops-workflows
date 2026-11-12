@@ -1,8 +1,9 @@
-// Repository rulesets of ADR 0052 Q53b. Shapes verified against the GitHub API.
+// Repository ruleset of ADR 0052 Q53b/Q48e. Shape verified against the GitHub API.
+// Binds everyone with write access equally (Marco, Till, agents): PR plus green
+// checks; only the deploy key may push (maintenance merge, auto-rollback).
 const TARGET = { target: "branch", enforcement: "active", conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } } };
 const DEPLOY_KEY_BYPASS = { actor_type: "DeployKey", bypass_mode: "always" };
 const REQUIRED_CHECKS = ["ci / checks", "ci / secret-scan", "ci / standard"];
-const REPOSITORY_ROLE_ADMIN = 5;
 
 export function mainProtectionRuleset() {
   return {
@@ -30,14 +31,5 @@ export function mainProtectionRuleset() {
         },
       },
     ],
-  };
-}
-
-export function onlyMarcoMergesRuleset() {
-  return {
-    name: "nur-marco-merged",
-    ...TARGET,
-    bypass_actors: [{ actor_id: REPOSITORY_ROLE_ADMIN, actor_type: "RepositoryRole", bypass_mode: "always" }, DEPLOY_KEY_BYPASS],
-    rules: [{ type: "update", parameters: { update_allows_fetch_and_merge: false } }],
   };
 }

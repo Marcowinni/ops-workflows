@@ -1,6 +1,6 @@
 // Pure plan: which commands run, in which order. Secrets are placeholders
 // ({ ref }) that the executor resolves; nothing here holds a real secret.
-import { mainProtectionRuleset, onlyMarcoMergesRuleset } from "./rulesets.mjs";
+import { mainProtectionRuleset } from "./rulesets.mjs";
 
 export const ref = (name, show) => ({ ref: name, show });
 export const isRef = (x) => typeof x === "object" && x !== null && "ref" in x;
@@ -38,9 +38,9 @@ export function buildPlan({ owner, name, template, protect }) {
       },
       {
         id: "rulesets",
-        label: "Rulesets main-schutz und nur-marco-merged anlegen",
-        cleanup: `Rulesets in den Repo-Einstellungen löschen (Settings > Rules > Rulesets) in ${slug}.`,
-        commands: [mainProtectionRuleset(), onlyMarcoMergesRuleset()].map((ruleset) => ({
+        label: "Ruleset main-schutz anlegen",
+        cleanup: `Ruleset in den Repo-Einstellungen löschen (Settings > Rules > Rulesets) in ${slug}.`,
+        commands: [mainProtectionRuleset()].map((ruleset) => ({
           argv: gh("api", "-X", "POST", `repos/${slug}/rulesets`, "--input", "-"),
           stdin: JSON.stringify(ruleset),
         })),

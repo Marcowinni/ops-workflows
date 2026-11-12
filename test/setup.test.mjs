@@ -4,7 +4,7 @@ import { parseArgs, validateName } from "../setup/lib/args.mjs";
 import { executePlan, sha256Hex } from "../setup/lib/execute.mjs";
 import { formatFailure, formatPlan, formatSummary } from "../setup/lib/format.mjs";
 import { buildPlan } from "../setup/lib/plan.mjs";
-import { mainProtectionRuleset, onlyMarcoMergesRuleset } from "../setup/lib/rulesets.mjs";
+import { mainProtectionRuleset } from "../setup/lib/rulesets.mjs";
 
 const opts = { owner: "Marcowinni", name: "demo", template: "Marcowinni/project-template" };
 const TARGET = { target: "branch", enforcement: "active", conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } } };
@@ -46,22 +46,13 @@ test("ruleset A: main-schutz exact", () => {
   });
 });
 
-test("ruleset B: nur-marco-merged exact", () => {
-  assert.deepEqual(onlyMarcoMergesRuleset(), {
-    name: "nur-marco-merged",
-    ...TARGET,
-    bypass_actors: [{ actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always" }, { actor_type: "DeployKey", bypass_mode: "always" }],
-    rules: [{ type: "update", parameters: { update_allows_fetch_and_merge: false } }],
-  });
-});
-
-test("plan: without --protect only repo and token; with --protect adds key and rulesets", () => {
+test("plan: without --protect only repo and token; with --protect adds key and ruleset", () => {
   assert.deepEqual(buildPlan({ ...opts, protect: false }).map((s) => s.id), ["repo", "report-token"]);
   const steps = buildPlan({ ...opts, protect: true });
   assert.deepEqual(steps.map((s) => s.id), ["repo", "report-token", "deploy-key", "rulesets"]);
   assert.deepEqual(steps[0].commands[0].argv, ["gh", "repo", "create", "Marcowinni/demo", "--template", "Marcowinni/project-template", "--private", "--clone"]);
   const rulesets = steps[3].commands.map((c) => JSON.parse(c.stdin).name);
-  assert.deepEqual(rulesets, ["main-schutz", "nur-marco-merged"]);
+  assert.deepEqual(rulesets, ["main-schutz"]);
 });
 
 test("dry-run plan output contains placeholders and no secret", () => {
