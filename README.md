@@ -68,6 +68,7 @@ Die Stufe kommt aus `solution_type` im Steckbrief (`AGENTS.md`). Nur wo es keine
 
 - Paketmanager wird am Lockfile erkannt (pnpm oder npm), mit Cache.
 - Fehlt `lint`, `typecheck` oder `test` in `package.json`, wird der Schritt übersprungen und im Summary als Lücke vermerkt. Ein fehlendes Build-Skript bricht ab, ausser auf Stufe `website`: Dort (auch ohne `package.json`) läuft stattdessen `node --check` über alle JS-Dateien.
+- Entwurf vor dem ersten Code (kein `package.json` und keine JS/TS-Datei): `checks` ist auf jeder Stufe grün und vermerkt «Noch kein Code» im Summary. Sobald eine Code-Datei oder ein `package.json` da ist, gelten die Regeln oben.
 - Weitere Eingaben: `working-directory` (Standard `.`), `node-version` (Standard `24`), `build-script` (Standard `build`), `standard-mode` (Standard `warn`, siehe «Check standard»).
 - Für die Wartung: `required-checks: "ci / checks, ci / secret-scan"`.
 - Dependabot-PRs merged der Wartungslauf nach seinen Regeln. Eigene `dependabot-auto-merge.yml` im Repo entfernen, sobald es eingebunden ist.
